@@ -88,6 +88,15 @@ app.post('/plage-mesure', (req, res) => {
         });
 });
 
+// Route pour récupérer une plage de mesure
+app.get('/plage-mesure/:username', (req, res) => {
+    const { username } = req.params;
+    db.query('SELECT * FROM plages_mesure WHERE username = ?', [username], (err, results) => {
+        if (err) return res.status(500).json({ error: 'Erreur MySQL' });
+        res.json({ plages: results });
+    });
+});
+
 // Lancer le serveur sur le port 3000
 app.listen(PORT, () => {
     console.log(`Serveur backend en écoute sur http://192.168.65.227:${PORT}`);
