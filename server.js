@@ -65,7 +65,18 @@ app.post('/login', async (req, res) => {
     }
 });
 
-
+// Route pour enregistrer des mesures capteurs
+app.post('/capteurs', (req, res) => {
+    const { capteurs } = req.body;
+    capteurs.forEach(({ type, valeur }) => {
+        db.query('INSERT INTO mesures (type, valeur, date) VALUES (?, ?, NOW())',
+            [type, valeur], (err) => {
+                if (err) return res.status(500).json({ error: 'Erreur MySQL' });
+            });
+    });
+    wss.clients.forEach(client => client.send(JSON.stringify({ type: 'capteurs', data: capteurs })));
+    res.json({ message: 'Données enregistrées' });
+});
 
 
 
