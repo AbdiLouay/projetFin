@@ -37,7 +37,33 @@ wss.on('connection', ws => {
     console.log('Client WebSocket connecté');
 });
 
+// Route d'authentification avec École Directe
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const response = await axios.post('https://api.ecoledirecte.com/v3/login.awp', {
+            identifiant: username,
+            motdepasse: password
+        });
 
+        if (response.data.code === 200) {
+            const userData = response.data.data.accounts[0];
+            const fullName = `${userData.prenom} ${userData.nom}`;
+            const token = jwt.sign({ username, fullName }, SECRET_KEY, { expiresIn: '1h' });
+            db.query('INSERT INTO users (username, fullname, token) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE fullname = ?, token = ?',
+                [username, fullName, token, fullName, token], (err) => {
+                    if (err) return res.status(500).json({ error: 'Erreur MySQL' });
+                });
+
+            wss.clients.forEach(client => client.send(JSON.stringify({ type: 'auth-success', token })));
+            res.json({ message: 'Authentification réussie', token, fullName });
+        } else {
+            res.status(401).json({ error: 'Identifiants invalides' });
+        }
+    } catch (error) {
+        res.status(500).json({ error: 'Erreur lors de la connexion à École Directe' });
+    }
+});
 
 
 
