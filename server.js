@@ -78,7 +78,15 @@ app.post('/capteurs', (req, res) => {
     res.json({ message: 'Données enregistrées' });
 });
 
-
+// Route pour enregistrer une plage de mesure
+app.post('/plage-mesure', (req, res) => {
+    const { username, nom, debut, fin } = req.body;
+    db.query('INSERT INTO plages_mesure (username, nom, debut, fin) VALUES (?, ?, ?, ?)',
+        [username, nom, debut, fin], (err) => {
+            if (err) return res.status(500).json({ error: 'Erreur MySQL' });
+            res.json({ message: 'Plage de mesure enregistrée' });
+        });
+});
 
 // Lancer le serveur sur le port 3000
 app.listen(PORT, () => {
