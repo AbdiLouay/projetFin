@@ -31,6 +31,12 @@ db.connect(err => {
     console.log('Connecté à la base de données MySQL.');
 });
 
+// WebSocket Server
+const wss = new WebSocket.Server({ port: 8080 });
+wss.on('connection', ws => {
+    console.log('Client WebSocket connecté');
+});
+
 
 
 
@@ -41,4 +47,3 @@ db.connect(err => {
 app.listen(PORT, () => {
     console.log(`Serveur backend en écoute sur http://192.168.65.227:${PORT}`);
 });
-//
