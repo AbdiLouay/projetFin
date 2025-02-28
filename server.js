@@ -2,27 +2,29 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
 const mysql = require('mysql');
-const jwt = require('jsonwebtoken'); // Importez jsonwebtoken
-
+const jwt = require('jsonwebtoken');
+const axios = require('axios'); // Ajout d'Axios
+const WebSocket = require('ws'); // Ajout de WebSocket
 const cors = require('cors');
+
 const app = express();
 const PORT = 3000;
+const SECRET_KEY = 'votre_secret_key';
 
-// Activer CORS pour toutes les routes
+// Activer CORS
 app.use(cors());
-
 app.use(bodyParser.json());
 app.use(cookieParser());
 
 // Configuration de la base de données
 const db = mysql.createConnection({
-    host: '192.168.65.227', // L'adresse IP ou le nom d'hôte de votre serveur
-    user: 'chef',           // Votre utilisateur MySQL
-    password: 'root',       // Votre mot de passe MySQL
-    database: 'Connexion',  // Le nom de votre base de données
+    host: '192.168.65.227',
+    user: 'chef',
+    password: 'root',
+    database: 'Connexion',
 });
 
-// Connecter à la base
+// Connexion à la base
 db.connect(err => {
     if (err) {
         console.error('Erreur de connexion à la base de données :', err);
@@ -40,6 +42,7 @@ wss.on('connection', ws => {
 // Route d'authentification avec École Directe
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
+
     try {
         const response = await axios.post('https://api.ecoledirecte.com/v3/login.awp', {
             identifiant: username,
@@ -49,19 +52,36 @@ app.post('/login', async (req, res) => {
         if (response.data.code === 200) {
             const userData = response.data.data.accounts[0];
             const fullName = `${userData.prenom} ${userData.nom}`;
-            const token = jwt.sign({ username, fullName }, SECRET_KEY, { expiresIn: '1h' });
-            db.query('INSERT INTO users (username, fullname, token) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE fullname = ?, token = ?',
-                [username, fullName, token, fullName, token], (err) => {
-                    if (err) return res.status(500).json({ error: 'Erreur MySQL' });
-                });
 
-            wss.clients.forEach(client => client.send(JSON.stringify({ type: 'auth-success', token })));
-            res.json({ message: 'Authentification réussie', token, fullName });
+            // Vérifier si l'utilisateur a déjà un token en base
+            db.query('SELECT token FROM users WHERE username = ?', [username], (err, results) => {
+                if (err) return res.status(500).json({ error: 'Erreur MySQL' });
+
+                if (results.length > 0 && results[0].token) {
+                    // Un token existe déjà, on le renvoie
+                    const existingToken = results[0].token;
+                    return res.json({ message: 'Authentification réussie', token: existingToken, fullName });
+                } else {
+                    // Pas de token existant, on en génère un
+                    const token = jwt.sign({ username, fullName }, SECRET_KEY, { expiresIn: '1h' });
+
+                    db.query('INSERT INTO users (username, fullname, token) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE fullname = ?, token = ?',
+                        [username, fullName, token, fullName, token], (err) => {
+                            if (err) return res.status(500).json({ error: 'Erreur MySQL' });
+                        });
+
+                    // Envoyer via WebSocket
+                    wss.clients.forEach(client => client.send(JSON.stringify({ type: 'auth-success', token })));
+                    
+                    return res.json({ message: 'Authentification réussie', token, fullName });
+                }
+            });
+
         } else {
-            res.status(401).json({ error: 'Identifiants invalides' });
+            return res.status(401).json({ error: 'Identifiants invalides' });
         }
     } catch (error) {
-        res.status(500).json({ error: 'Erreur lors de la connexion à École Directe' });
+        return res.status(500).json({ error: 'Erreur lors de la connexion à École Directe' });
     }
 });
 
@@ -97,7 +117,7 @@ app.get('/plage-mesure/:username', (req, res) => {
     });
 });
 
-// Lancer le serveur sur le port 3000
+// Lancer le serveur
 app.listen(PORT, () => {
     console.log(`Serveur backend en écoute sur http://192.168.65.227:${PORT}`);
 });
