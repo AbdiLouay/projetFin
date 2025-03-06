@@ -4,7 +4,6 @@ const cookieParser = require('cookie-parser');
 const mysql = require('mysql');
 const jwt = require('jsonwebtoken');
 const axios = require('axios'); // Ajout d'Axios
-const WebSocket = require('ws'); // Ajout de WebSocket
 const cors = require('cors');
 
 const app = express();
@@ -33,58 +32,137 @@ db.connect(err => {
     console.log('Connecté à la base de données MySQL.');
 });
 
-// WebSocket Server
-const wss = new WebSocket.Server({ port: 8080 });
-wss.on('connection', ws => {
-    console.log('Client WebSocket connecté');
-});
 
-// Route d'authentification avec École Directe
-app.post('/login', async (req, res) => {
-    const { username, password } = req.body;
+//faire maintenant
 
-    try {
-        const response = await axios.post('https://api.ecoledirecte.com/v3/login.awp', {
-            identifiant: username,
-            motdepasse: password
-        });
+// Route pour l'inscription
+app.post('/api/register', (req, res) => {
+    const { nom, motDePasse } = req.body;
 
-        if (response.data.code === 200) {
-            const userData = response.data.data.accounts[0];
-            const fullName = `${userData.prenom} ${userData.nom}`;
-
-            // Vérifier si l'utilisateur a déjà un token en base
-            db.query('SELECT token FROM users WHERE username = ?', [username], (err, results) => {
-                if (err) return res.status(500).json({ error: 'Erreur MySQL' });
-
-                if (results.length > 0 && results[0].token) {
-                    // Un token existe déjà, on le renvoie
-                    const existingToken = results[0].token;
-                    return res.json({ message: 'Authentification réussie', token: existingToken, fullName });
-                } else {
-                    // Pas de token existant, on en génère un
-                    const token = jwt.sign({ username, fullName }, SECRET_KEY, { expiresIn: '1h' });
-
-                    db.query('INSERT INTO users (username, fullname, token) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE fullname = ?, token = ?',
-                        [username, fullName, token, fullName, token], (err) => {
-                            if (err) return res.status(500).json({ error: 'Erreur MySQL' });
-                        });
-
-                    // Envoyer via WebSocket
-                    wss.clients.forEach(client => client.send(JSON.stringify({ type: 'auth-success', token })));
-                    
-                    return res.json({ message: 'Authentification réussie', token, fullName });
-                }
-            });
-
-        } else {
-            return res.status(401).json({ error: 'Identifiants invalides' });
-        }
-    } catch (error) {
-        return res.status(500).json({ error: 'Erreur lors de la connexion à École Directe' });
+    if (!nom || !motDePasse) {
+        return res.status(400).json({ message: 'Nom et mot de passe sont requis.' });
     }
+
+    const checkQuery = 'SELECT * FROM users WHERE nom = ?';
+    db.query(checkQuery, [nom], (err, results) => {
+        if (err) {
+            console.error('Erreur lors de la vérification de l’utilisateur :', err);
+            return res.status(500).json({ message: 'Erreur interne du serveur' });
+        }
+
+        if (results.length > 0) {
+            return res.status(409).json({ message: 'Cet utilisateur existe déjà.' });
+        }
+
+        const insertQuery = 'INSERT INTO users (nom, mot_de_passe) VALUES (?, ?)';
+        db.query(insertQuery, [nom, motDePasse], (err, result) => {
+            if (err) {
+                console.error('Erreur lors de l’insertion de l’utilisateur :', err);
+                return res.status(500).json({ message: 'Erreur interne du serveur' });
+            }
+
+            // Générer un token JWT après l'insertion de l'utilisateur
+            const token = jwt.sign({ nom }, 'votre-cle-secrete', { expiresIn: '1h' });
+
+            // Mettre à jour la base de données avec le token généré
+            const updateQuery = 'UPDATE users SET token = ? WHERE id = ?';
+            db.query(updateQuery, [token, result.insertId], (err, resultUpdate) => {
+                if (err) {
+                    console.error('Erreur lors de l\'enregistrement du token :', err);
+                    return res.status(500).json({ message: 'Erreur interne du serveur' });
+                }
+
+                // Répondre au client avec le message de succès et le token
+                return res.status(201).json({
+                    message: 'Utilisateur créé avec succès.',
+                    token: token, // Renvoie le token dans la réponse
+                });
+            });
+        });
+    });
 });
 
+// Route pour la connexion
+app.post('/api/login', (req, res) => {
+    const { nom, motDePasse } = req.body;
+
+    const query = 'SELECT * FROM users WHERE nom = ? AND mot_de_passe = ?';
+    db.query(query, [nom, motDePasse], (err, results) => {
+        if (err) {
+            console.error('Erreur lors de la requête :', err);
+            return res.status(500).json({ message: 'Erreur interne du serveur' });
+        }
+
+        if (results.length > 0) {
+            const user = results[0];
+            const token = jwt.sign({ id: user.id, nom: user.nom }, 'votre-cle-secrete', { expiresIn: '1h' });
+
+            const updateQuery = 'UPDATE users SET token = ? WHERE id = ?';
+            db.query(updateQuery, [token, user.id], (err, result) => {
+                if (err) {
+                    console.error('Erreur lors de l\'enregistrement du token :', err);
+                    return res.status(500).json({ message: 'Erreur interne du serveur' });
+                }
+
+                res.cookie('token', token, {
+                    httpOnly: true,
+                    secure: false, 
+                    sameSite: 'Strict',
+                });
+                return res.status(200).json({ message: 'Connexion réussie', token });
+            });
+        } else {
+            return res.status(401).json({ message: 'Identifiants invalides' });
+        }
+    });
+});
+// test
+app.get('/api/protected', (req, res) => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader) {
+        return res.status(401).json({ message: 'Non autorisé' });
+    }
+
+    const token = authHeader.split(' ')[1]; // Récupère le token après "Bearer"
+
+    jwt.verify(token, 'votre-cle-secrete', (err, decoded) => {
+        if (err) {
+            return res.status(403).json({ message: 'Token invalide ou expiré' });
+        }
+
+        return res.status(200).json({ message: 'Bienvenue dans la zone protégée !' });
+    });
+});
+
+
+// Route protégée nécessitant une authentification
+app.get('/api/protected', (req, res) => {
+    const token = req.cookies.token;
+
+    if (!token) {
+        return res.status(401).json({ message: 'Non autorisé' });
+    }
+
+    jwt.verify(token, 'votre-cle-secrete', (err, decoded) => {
+        if (err) {
+            return res.status(403).json({ message: 'Token invalide ou expiré' });
+        }
+
+        return res.status(200).json({ message: 'Bienvenue dans la zone protégée !' });
+    });
+});
+
+// Route pour la déconnexion
+app.post('/api/logout', (req, res) => {
+    res.clearCookie('token');
+    return res.status(200).json({ message: 'Déconnexion réussie' });
+});
+
+
+
+
+//a faire plutar
 // Route pour enregistrer des mesures capteurs
 app.post('/capteurs', (req, res) => {
     const { capteurs } = req.body;
@@ -97,6 +175,7 @@ app.post('/capteurs', (req, res) => {
     wss.clients.forEach(client => client.send(JSON.stringify({ type: 'capteurs', data: capteurs })));
     res.json({ message: 'Données enregistrées' });
 });
+
 
 // Route pour enregistrer une plage de mesure
 app.post('/plage-mesure', (req, res) => {
