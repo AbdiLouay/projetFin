@@ -40,7 +40,8 @@ db.connect(err => {
     console.log('Connecté à la base de données MySQL.');
 });
 
-// Route pour enregistrer un utilisateur
+
+// Route pour enregistrer un utilisateur et cree le token
 app.post('/api/register', [
     body('login')
         .isString()
@@ -49,21 +50,19 @@ app.post('/api/register', [
         .escape(),
     body('password')
         .isString()
-        .isLength({ min: 6 }).withMessage('Le mot de passe doit contenir au moins 6 caractères.'),
-    body('role').optional().isString()
-], async (req, res) => {
+        .isLength({ min: 6 }).withMessage('Le mot de passe doit contenir au moins 6 caractères.')
+], async (req, res) => {  // Supprimé `body('role')`
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ message: 'Données invalides', errors: errors.array() });
     }
 
-    const { login, password, role } = req.body;
+    const { login, password } = req.body; // Ne récupère plus `role`
     console.log(`Demande d'inscription reçue pour: ${login}`);
 
-    // Vérifier si l'utilisateur existe déjà
     db.query('SELECT * FROM Utilisateur WHERE nom = ?', [login], async (err, results) => {
         if (err) {
-            console.error('Erreur lors de la vérification de l\'utilisateur :', err);
+            console.error("Erreur lors de la vérification de l'utilisateur :", err);
             return res.status(500).json({ message: 'Erreur interne du serveur' });
         }
         if (results.length > 0) {
@@ -71,24 +70,20 @@ app.post('/api/register', [
             return res.status(409).json({ message: 'Cet utilisateur existe déjà.' });
         }
 
-        // Générer une date d'expiration pour le compte (1 an plus tard)
         const dateExpiration = new Date();
         dateExpiration.setFullYear(dateExpiration.getFullYear() + 1);
         const formattedDate = dateExpiration.toISOString().slice(0, 19).replace('T', ' ');
 
-        // Hasher le mot de passe
         const hashedPassword = await bcrypt.hash(password, 10);
         console.log('Mot de passe hashé avec succès');
 
-        // Générer un token
-        const token = jwt.sign({ login, role: role || 'user' }, SECRET_KEY, { expiresIn: '1h' });
+        const token = jwt.sign({ login, role: 'user' }, SECRET_KEY, { expiresIn: '1h' });
 
-        // Enregistrer l'utilisateur en base avec le token
         db.query('INSERT INTO Utilisateur (nom, mot_de_passe, role, date_expiration, token) VALUES (?, ?, ?, ?, ?)',
-            [login, hashedPassword, role || 'user', formattedDate, token],
+            [login, hashedPassword, 'user', formattedDate, token],  // `role` est fixé à 'user'
             (err, result) => {
                 if (err) {
-                    console.error('Erreur lors de l\'insertion de l\'utilisateur :', err);
+                    console.error("Erreur lors de l'insertion de l'utilisateur :", err);
                     return res.status(500).json({ message: 'Erreur interne du serveur' });
                 }
                 console.log(`Utilisateur créé avec succès: ${login} (ID: ${result.insertId})`);
@@ -98,7 +93,8 @@ app.post('/api/register', [
     });
 });
 
-// Route pour la connexion
+
+// Route pour la connexion et (lire le token)
 app.post('/api/login', [
     body('login')
         .isString()
@@ -130,6 +126,10 @@ app.post('/api/login', [
         const user = results[0];
         console.log(`Utilisateur trouvé: ${user.nom}`);
 
+        // Récupérer l'ancien token depuis la base de données
+        const ancienToken = user.token || null;
+        console.log(`Ancien token pour ${login}: ${ancienToken}`);
+
         bcrypt.compare(password, user.mot_de_passe, (err, isMatch) => {
             if (err) {
                 console.error('Erreur lors de la comparaison des mots de passe :', err);
@@ -140,17 +140,27 @@ app.post('/api/login', [
                 return res.status(401).json({ message: 'Identifiants invalides' });
             }
 
-            const token = jwt.sign({ id_utilisateur: user.id_utilisateur, nom: user.nom, role: user.role }, SECRET_KEY, { expiresIn: '1h' });
-            console.log(`Connexion réussie, token généré pour ${login}`);
+            // Générer un NOUVEAU token
+            const nouveauToken = jwt.sign({ id_utilisateur: user.id_utilisateur, nom: user.nom, role: user.role }, SECRET_KEY, { expiresIn: '1h' });
+            console.log(`Connexion réussie, nouveau token généré pour ${login}`);
 
-            db.query('UPDATE Utilisateur SET token = ? WHERE id_utilisateur = ?', [token, user.id_utilisateur], (err) => {
+            // Mettre à jour le token en base
+            db.query('UPDATE Utilisateur SET token = ? WHERE id_utilisateur = ?', [nouveauToken, user.id_utilisateur], (err) => {
                 if (err) {
                     console.error('Erreur lors de la mise à jour du token :', err);
                     return res.status(500).json({ message: 'Erreur interne du serveur' });
                 }
-                console.log(`Token enregistré pour ${login}`);
-                res.cookie('token', token, { httpOnly: true, secure: false, sameSite: 'Strict' });
-                return res.status(200).json({ message: 'Connexion réussie', token });
+                console.log(`Nouveau token enregistré pour ${login}`);
+
+                // Envoyer le token en cookie sécurisé
+                res.cookie('token', nouveauToken, { httpOnly: true, secure: false, sameSite: 'Strict' });
+
+                // Retourner l'ancien et le nouveau token dans la réponse JSON
+                return res.status(200).json({ 
+                    message: 'Connexion réussie', 
+                    ancien_token: ancienToken,  
+                    nouveau_token: nouveauToken 
+                });
             });
         });
     });
