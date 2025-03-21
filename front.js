@@ -1,192 +1,293 @@
-import React, { useState, useEffect } from "react";
+const express = require('express');
+const bodyParser = require('body-parser');
+const cookieParser = require('cookie-parser');
+const mysql = require('mysql');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const cors = require('cors');
+const { body, validationResult } = require('express-validator');
 
-const App = () => {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [view, setView] = useState("login");
-  const [login, setLogin] = useState("");
-  const [password, setPassword] = useState("");
-  const [message, setMessage] = useState("");
-  const [sensorData, setSensorData] = useState(null);
+const app = express();
+const PORT = 3000;
+const SECRET_KEY = 'votre-cle-secrete';
 
-  const API_URL = "http://192.168.65.227:3000/api";
+// Activer CORS avec la configuration correcte
+app.use(cors({
+    origin: 'http://192.168.65.227:3001',  // Autoriser l'origine du front-end
+    credentials: true,  // Permettre l'envoi de cookies et de headers d'authentification
+}));
 
-  // Fonction pour récupérer le token depuis les cookies
-  const getTokenFromCookies = () => {
-    const match = document.cookie.match(/(^| )token=([^;]+)/);
-    return match ? match[2] : null;
-  };
+// Autres middlewares
+app.use(bodyParser.json());
+app.use(cookieParser());
 
-  // Fonction pour récupérer les données du capteur
-  const fetchSensorData = async () => {
-    const token = getTokenFromCookies();
-    console.log("Token récupéré depuis les cookies:", token); // Affichage du token dans la console pour déboguer
+// Middleware pour logger toutes les requêtes
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    console.log('Corps de la requête:', req.body);
+    next();
+});
+
+// Configuration de la base de données
+const db = mysql.createConnection({
+    host: '192.168.65.227',
+    user: 'chef',
+    password: 'root',
+    database: 'vmc1',
+});
+
+// Connexion à la base
+db.connect(err => {
+    if (err) {
+        console.error('Erreur de connexion à la base de données :', err);
+        process.exit(1);
+    }
+    console.log('Connecté à la base de données MySQL.');
+});
+
+// Route pour enregistrer un utilisateur et token
+app.post('/api/register', [
+    body('login')
+        .isString()
+        .isLength({ min: 3 }).withMessage('Le login doit contenir au moins 3 caractères.')
+        .trim()
+        .escape(),
+    body('password')
+        .isString()
+        .isLength({ min: 6 }).withMessage('Le mot de passe doit contenir au moins 6 caractères.'),
+    body('role').optional().isString()
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ message: 'Données invalides', errors: errors.array() });
+    }
+
+    const { login, password, role } = req.body;
+    console.log(`Demande d'inscription reçue pour: ${login}`);
+
+    // Vérifier si l'utilisateur existe déjà
+    db.query('SELECT * FROM Utilisateur WHERE nom = ?', [login], async (err, results) => {
+        if (err) {
+            console.error('Erreur lors de la vérification de l\'utilisateur :', err);
+            return res.status(500).json({ message: 'Erreur interne du serveur' });
+        }
+        if (results.length > 0) {
+            console.log(`Utilisateur déjà existant: ${login}`);
+            return res.status(409).json({ message: 'Cet utilisateur existe déjà.' });
+        }
+
+        // Hasher le mot de passe
+        const hashedPassword = await bcrypt.hash(password, 10);
+        console.log('Mot de passe hashé avec succès');
+
+        // Générer un token
+        const token = jwt.sign({ login, role: role || 'user' }, SECRET_KEY, { expiresIn: '1h' });
+
+        // Enregistrer l'utilisateur en base de donnee
+        db.query('INSERT INTO Utilisateur (nom, mot_de_passe, role, token) VALUES (?, ?, ?, ?)',
+            [login, hashedPassword, role || 'user', token],
+            (err, result) => {
+                if (err) {
+                    console.error('Erreur lors de l\'insertion de l\'utilisateur :', err);
+                    return res.status(500).json({ message: 'Erreur interne du serveur' });
+                }
+                console.log(`Utilisateur créé avec succès: ${login} (ID: ${result.insertId})`);
+                return res.status(201).json({ message: 'Utilisateur créé avec succès.', token });
+            }
+        );
+    });
+});
+
+// Route de connexion avec logs améliorés
+app.post('/api/login', [
+    body('login')
+        .isString()
+        .isLength({ min: 3 }).withMessage('Le login doit contenir au moins 3 caractères.')
+        .trim()
+        .escape(),
+    body('password')
+        .isString()
+        .isLength({ min: 6 }).withMessage('Le mot de passe doit contenir au moins 6 caractères.')
+], (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        console.warn(`[${new Date().toISOString()}] ❌ Données invalides reçues`, errors.array());
+        return res.status(400).json({ message: 'Données invalides', errors: errors.array() });
+    }
+
+    const { login, password } = req.body;
+    console.log(`[${new Date().toISOString()}] 🔹 Demande de connexion reçue pour: ${login}`);
+
+    db.query('SELECT * FROM Utilisateur WHERE nom = ?', [login], (err, results) => {
+        if (err) {
+            console.error(`[${new Date().toISOString()}] ❌ Erreur lors de la recherche de l'utilisateur:`, err);
+            return res.status(500).json({ message: 'Erreur interne du serveur' });
+        }
+        if (results.length === 0) {
+            console.warn(`[${new Date().toISOString()}] ⚠️ Utilisateur non trouvé: ${login}`);
+            return res.status(401).json({ message: 'Identifiants invalides' });
+        }
+
+        const user = results[0];
+        console.log(`[${new Date().toISOString()}] ✅ Utilisateur trouvé: ${user.nom}`);
+
+        // Vérifier le mot de passe
+        bcrypt.compare(password, user.mot_de_passe, (err, isMatch) => {
+            if (err) {
+                console.error(`[${new Date().toISOString()}] ❌ Erreur lors de la comparaison des mots de passe:`, err);
+                return res.status(500).json({ message: 'Erreur interne du serveur' });
+            }
+            if (!isMatch) {
+                console.warn(`[${new Date().toISOString()}] ⚠️ Mot de passe incorrect pour: ${login}`);
+                return res.status(401).json({ message: 'Identifiants invalides' });
+            }
+
+            // Générer un nouveau token
+            const nouveauToken = jwt.sign(
+                { id_utilisateur: user.id_utilisateur, nom: user.nom, role: user.role },
+                SECRET_KEY,
+                { expiresIn: '4h' }
+            );
+            console.log(`[${new Date().toISOString()}] ✅ Connexion réussie, token généré pour ${login}: ${nouveauToken}`);
+
+            // Mettre à jour le token en base de données
+            db.query('UPDATE Utilisateur SET token = ? WHERE id_utilisateur = ?', [nouveauToken, user.id_utilisateur], (err) => {
+                if (err) {
+                    console.error(`[${new Date().toISOString()}] ❌ Erreur lors de la mise à jour du token en base:`, err);
+                    return res.status(500).json({ message: 'Erreur interne du serveur' });
+                }
+
+                console.log(`[${new Date().toISOString()}] ✅ Nouveau token enregistré en base pour ${login}`);
+
+                res.cookie('token', 'valeur-du-token', {
+                    secure: false,    // Désactive secure si tu es en HTTP
+                    maxAge: 3600000,  // Durée de vie du cookie (1 heure)
+                    sameSite: 'Lax',  // Politique SameSite (peut être 'Strict' ou 'None' selon les besoins)
+                });                
+
+                // Vérifier si le cookie est bien défini
+                console.log(`[${new Date().toISOString()}] 🔹 Vérification du cookie envoyé:`, res.getHeader('Set-Cookie'));
+
+                // Vérifier les en-têtes de la réponse
+                console.log(`[${new Date().toISOString()}] 🔹 Headers de réponse envoyés:`, res.getHeaders());
+
+                // Retourner un message de succès
+                return res.status(200).json({
+                    message: 'Connexion réussie',
+                    data: { token: nouveauToken }
+                });
+            });
+        });
+    });
+});
+
+
+const verifyToken = (req, res, next) => {
+    console.log('--- Vérification du Token ---');
+    
+    // Log des cookies reçus dans la requête pour vérifier leur contenu
+    console.log(`[${new Date().toISOString()}] Cookies reçus :`, req.cookies);
+    
+    // Récupérer le token depuis les cookies ou l'en-tête Authorization
+    let token = req.cookies.token || req.headers['authorization']?.split(' ')[1];  // Récupérer le token depuis Authorization
 
     if (!token) {
-      setMessage("⚠️ Vous devez être connecté pour voir les données.");
-      console.log("Token manquant dans la requête.");
-      return;
+        console.warn(`[${new Date().toISOString()}] ⚠️ Accès refusé: Aucun token trouvé dans les cookies ou les headers.`);
+        return res.status(403).json({ message: 'Token manquant' });
     }
 
-    try {
-      const response = await fetch(`${API_URL}/capteur`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,  // Envoi du token dans les headers
-        },
-      });
+    console.log(`[${new Date().toISOString()}] ✅ Token trouvé dans les cookies ou les headers: ${token.substring(0, 10)}... (raccourci pour sécurité)`);
 
-      // Afficher la requête envoyée pour la récupération des données du capteur
-      console.log("Requête envoyée:", {
-        url: `${API_URL}/capteur`,
-        method: "GET",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json",
+    // Vérification du token JWT
+    jwt.verify(token, SECRET_KEY, (err, decoded) => {
+        if (err) {
+            console.error(`[${new Date().toISOString()}] ❌ Échec de la vérification du token.`);
+            
+            // Log de l'erreur spécifique
+            console.error(`[${new Date().toISOString()}] Détails de l'erreur:`, err);
+
+            if (err.name === 'TokenExpiredError') {
+                console.warn('⚠️ Token expiré, demande de renouvellement nécessaire.');
+                return res.status(401).json({ message: 'Token expiré' });
+            }
+
+            console.error('Erreur lors de la validation du token:', err);
+            return res.status(401).json({ message: 'Token invalide' });
         }
-      });
 
-      if (!response.ok) {
-        throw new Error('Erreur lors de la récupération des données');
-      }
+        console.log(`[${new Date().toISOString()}] ✅ Token valide. Utilisateur: ${decoded.nom}, Rôle: ${decoded.role}`);
+        
+        // Ajouter l'utilisateur décodé à la requête
+        req.user = decoded;
 
-      const data = await response.json();
-      setSensorData(data);
-      console.log("Données du capteur:", data);  // Affichage des données dans la console
-    } catch (error) {
-      setMessage("⚠️ Erreur de récupération des données du capteur.");
-      console.error("Erreur de la requête:", error);  // Affiche l'erreur dans la console pour débogage
-    }
-  };
+        // Log de l'utilisateur décodé
+        console.log(`[${new Date().toISOString()}] Données utilisateur extraites du token :`, decoded);
 
-  // Utilisation de useEffect pour récupérer les données à chaque intervalle de 5 secondes
-  useEffect(() => {
-    let intervalId;
-    if (isLoggedIn) {
-      fetchSensorData();
-      intervalId = setInterval(fetchSensorData, 5000);  // Toutes les 5 secondes
-    }
-    return () => clearInterval(intervalId); // Nettoyage de l'intervalle
-  }, [isLoggedIn]);
-
-  // Fonction pour gérer la connexion
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    try {
-      const response = await fetch(`${API_URL}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ login, password }),
-      });
-
-      const data = await response.json();
-      console.log('Réponse serveur lors de la connexion:', data); // Afficher la réponse du serveur dans la console
-
-      if (response.ok) {
-        // Sauvegarder le token dans le cookie
-        document.cookie = `token=${data.data.token}; path=/; max-age=3600`; // Cookie valable 1 heure (3600 secondes)
-        setIsLoggedIn(true);
-        setView("home");
-      } else {
-        setMessage(data.message || "❌ Identifiants incorrects !");
-      }
-    } catch (error) {
-      setMessage("⚠️ Erreur de connexion au serveur.");
-      console.error("Erreur de la connexion:", error);  // Affiche l'erreur dans la console pour débogage
-    }
-  };
-
-  // Fonction pour gérer l'inscription
-  const handleRegister = async (e) => {
-    e.preventDefault();
-    try {
-      const response = await fetch(`${API_URL}/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ login, password }),
-      });
-
-      const data = await response.json();
-      console.log('Réponse serveur lors de l\'inscription:', data); // Afficher la réponse du serveur dans la console
-
-      if (response.ok) {
-        setMessage("✅ Inscription réussie !");
-        setTimeout(() => setView("login"), 1000);
-      } else {
-        setMessage(data.message || "⚠️ Erreur d'inscription.");
-      }
-    } catch (error) {
-      setMessage("⚠️ Erreur de connexion au serveur.");
-      console.error("Erreur lors de l'inscription:", error);  // Affiche l'erreur dans la console pour débogage
-    }
-  };
-
-  // Fonction pour gérer la déconnexion
-  const handleLogout = () => {
-    // Supprimer le cookie lors de la déconnexion
-    document.cookie = "token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC"; // Expirer le cookie
-    setIsLoggedIn(false);
-    setView("login");
-  };
-
-  return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #1e293b, #0f172a)' }}>
-      <div style={{ width: '100%', maxWidth: '400px', backgroundColor: '#1f2937', padding: '2rem', borderRadius: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.5)', color: '#fff' }}>
-        <h2 style={{ fontSize: '1.8rem', textAlign: 'center', marginBottom: '1.5rem' }}>🌬️ VMC Pro Platform</h2>
-
-        {message && <p style={{ color: '#f87171', textAlign: 'center', marginBottom: '1rem' }}>{message}</p>}
-
-        {!isLoggedIn && (
-          <form onSubmit={view === 'login' ? handleLogin : handleRegister}>
-            <input
-              style={{ width: '100%', padding: '0.8rem', marginBottom: '1rem', borderRadius: '8px', border: '1px solid #4b5563', background: '#334155', color: '#e2e8f0' }}
-              type="text"
-              placeholder="Nom d'utilisateur"
-              value={login}
-              onChange={(e) => setLogin(e.target.value)}
-              required
-            />
-            <input
-              style={{ width: '100%', padding: '0.8rem', marginBottom: '1rem', borderRadius: '8px', border: '1px solid #4b5563', background: '#334155', color: '#e2e8f0' }}
-              type="password"
-              placeholder="Mot de passe"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-            <button style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', backgroundColor: view === 'login' ? '#3b82f6' : '#10b981', color: '#fff', border: 'none', marginBottom: '1rem' }}>
-              {view === 'login' ? 'Se connecter' : "S'inscrire"}
-            </button>
-            <button type="button" onClick={() => setView(view === 'login' ? 'register' : 'login')} style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', backgroundColor: '#4b5563', color: '#fff' }}>
-              {view === 'login' ? 'Créer un compte' : 'Retour à la connexion'}
-            </button>
-          </form>
-        )}
-
-        {isLoggedIn && view === "home" && (
-          <div style={{ textAlign: 'center' }}>
-            <h3 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Bienvenue, {login} !</h3>
-            <div style={{ marginBottom: '1rem' }}>
-              <h4>Données du capteur :</h4>
-              {sensorData ? (
-                <ul style={{ listStyle: 'none', padding: 0, lineHeight: '1.6' }}>
-                  <li>🌡️ Température: {sensorData.valeurs.temperature} °C</li>
-                  <li>💧 Humidité: {sensorData.valeurs.humidite} %</li>
-                  <li>⚡ Pression: {sensorData.valeurs.pression} hPa</li>
-                  <li>⏰ Heure: {sensorData.timestamp}</li>
-                </ul>
-              ) : (
-                <p>Chargement des données...</p>
-              )}
-            </div>
-            <button style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', backgroundColor: '#ef4444', color: '#fff', border: 'none' }} onClick={handleLogout}>
-              Déconnexion
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+        next();
+    });
 };
 
-export default App;
+
+
+// Route pour envoyer des données de capteur aléatoires avec vérification du token
+app.get('/api/capteur', verifyToken, (req, res) => {
+    console.log('--- Requête reçue sur /api/capteur ---');
+    console.log(`[${new Date().toISOString()}] Requête GET /api/capteur de ${req.user ? req.user.nom : 'Utilisateur non authentifié'}`);
+
+    // Vérifier l'utilisateur authentifié
+    if (!req.user) {
+        console.log(`[${new Date().toISOString()}] Accès refusé: Aucun utilisateur authentifié.`);
+        return res.status(403).json({ message: 'Accès refusé: Token invalide ou manquant.' });
+    }
+
+    console.log(`[${new Date().toISOString()}] Utilisateur connecté:`, req.user);
+
+    // Générer des données de capteur aléatoires
+    const generateRandomData = () => {
+        const temperature = (Math.random() * (30 - 15) + 15).toFixed(2);
+        const humidite = (Math.random() * (100 - 30) + 30).toFixed(2);
+        const pression = (Math.random() * (1100 - 900) + 900).toFixed(2);
+
+        console.log(`[${new Date().toISOString()}] Données générées - Température: ${temperature}°C, Humidité: ${humidite}%, Pression: ${pression} hPa`);
+
+        return { temperature, humidite, pression };
+    };
+
+    const data = {
+        capteur_id: Math.floor(Math.random() * 1000),
+        valeurs: generateRandomData(),
+        timestamp: new Date().toISOString()
+    };
+
+    console.log(`[${new Date().toISOString()}] Données finales générées:`, JSON.stringify(data, null, 2));
+
+    console.log(`[${new Date().toISOString()}] Envoi des données au client...`);
+    res.json(data);
+
+    console.log(`[${new Date().toISOString()}] Réponse envoyée avec succès.`);
+});
+
+// ROUTE POUR RÉCUPÉRER LE TOKEN
+app.get('/api/get-token/:id', (req, res) => {
+    const userId = req.params.id;
+    const sql = 'SELECT token FROM Utilisateur WHERE id_utilisateur = ?';
+
+    db.query(sql, [userId], (err, result) => {
+        if (err) {
+            console.error('Erreur MySQL:', err);
+            res.status(500).json({ error: 'Erreur serveur' });
+            return;
+        }
+
+        if (result.length === 0) {
+            res.status(404).json({ error: 'Token non trouvé' });
+        } else {
+            res.json({ token: result[0].token });
+        }
+    });
+});
+
+// Lancer le serveur
+app.listen(PORT, () => {
+    console.log(`Serveur backend en écoute sur http://192.168.65.227:${PORT}`);
+});

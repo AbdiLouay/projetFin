@@ -83,7 +83,7 @@ app.post('/api/register', [
         // Générer un token
         const token = jwt.sign({ login, role: role || 'user' }, SECRET_KEY, { expiresIn: '1h' });
 
-        // Enregistrer l'utilisateur en base avec le token
+        // Enregistrer l'utilisateur en base de donnee
         db.query('INSERT INTO Utilisateur (nom, mot_de_passe, role, token) VALUES (?, ?, ?, ?)',
             [login, hashedPassword, role || 'user', token],
             (err, result) => {
@@ -146,7 +146,7 @@ app.post('/api/login', [
             const nouveauToken = jwt.sign(
                 { id_utilisateur: user.id_utilisateur, nom: user.nom, role: user.role },
                 SECRET_KEY,
-                { expiresIn: '1h' }
+                { expiresIn: '4h' }
             );
             console.log(`[${new Date().toISOString()}] ✅ Connexion réussie, token généré pour ${login}: ${nouveauToken}`);
 
@@ -265,6 +265,26 @@ app.get('/api/capteur', verifyToken, (req, res) => {
     res.json(data);
 
     console.log(`[${new Date().toISOString()}] Réponse envoyée avec succès.`);
+});
+
+// ROUTE POUR RÉCUPÉRER LE TOKEN
+app.get('/api/get-token/:id', (req, res) => {
+    const userId = req.params.id;
+    const sql = 'SELECT token FROM Utilisateur WHERE id_utilisateur = ?';
+
+    db.query(sql, [userId], (err, result) => {
+        if (err) {
+            console.error('Erreur MySQL:', err);
+            res.status(500).json({ error: 'Erreur serveur' });
+            return;
+        }
+
+        if (result.length === 0) {
+            res.status(404).json({ error: 'Token non trouvé' });
+        } else {
+            res.json({ token: result[0].token });
+        }
+    });
 });
 
 // Lancer le serveur
