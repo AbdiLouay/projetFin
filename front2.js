@@ -30,52 +30,56 @@ const App = () => {
   // Fonction pour récupérer les données du capteur
   const fetchSensorData = async () => {
     const token = getTokenFromCookies();
-    console.log("Token récupéré depuis les cookies:", token); // Affichage du token dans la console pour déboguer
-
+    console.log("Token récupéré depuis les cookies:", token);
+  
     if (!token) {
       setMessage("⚠️ Vous devez être connecté pour voir les données.");
-      console.log("Token manquant dans la requête.");
       return;
     }
-
+  
     try {
-      const response = await fetch(`${API_URL}/capteur`, {
+      const response = await fetch(`${API_URL}/capteurs`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,  // Envoi du token dans les headers
+          "Authorization": `Bearer ${token}`,
         },
       });
-
-      // Afficher la requête envoyée pour la récupération des données du capteur
-      console.log("Requête envoyée:", {
-        url: `${API_URL}/capteur`,
-        method: "GET",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json",
-        }
-      });
-
+  
+      console.log("Requête envoyée à", `${API_URL}/capteurs`);
+  
       if (!response.ok) {
-        throw new Error('Erreur lors de la récupération des données');
+        const errorText = await response.text();
+        throw new Error(`Erreur serveur: ${response.status} - ${errorText}`);
       }
-
-      const data = await response.json();
-      setSensorData(data);
-      setHistory(prev => [...prev.slice(-19), { 
-        timestamp: new Date().toLocaleTimeString(), 
-        temperature: data.valeurs.temperature, 
-        humidite: data.valeurs.humidite, 
-        pression: data.valeurs.pression 
+  
+      const capteurs = await response.json();
+      console.log("Données reçues du serveur:", capteurs);
+  
+      if (!Array.isArray(capteurs) || capteurs.length === 0) {
+        throw new Error("Aucun capteur trouvé ou format incorrect.");
+      }
+  
+      // 🔹 Stocker **tous** les capteurs dans le state
+      setSensorData(capteurs);
+  
+      // 🔹 Mettre à jour l'historique (limité à 20 entrées)
+      setHistory(prev => [...prev.slice(-19), {
+        timestamp: new Date().toLocaleTimeString(),
+        valeurs: capteurs.map(capteur => ({
+          id: capteur.capteur_id,
+          name: capteur.name,
+          value: capteur.value,
+          unit: capteur.unit,
+        }))
       }]);
-      
-      console.log("Données du capteur:", data);  // Affichage des données dans la console
+  
     } catch (error) {
-      setMessage("⚠️ Erreur de récupération des données du capteur.");
-      console.error("Erreur de la requête:", error);  // Affiche l'erreur dans la console pour débogage
+      setMessage("⚠️ Erreur lors de la récupération des données.");
+      console.error("Erreur lors de la récupération des données des capteurs:", error);
     }
   };
+  
 
   // Utilisation de useEffect pour récupérer les données à chaque intervalle de 5 secondes
   useEffect(() => {
@@ -182,63 +186,71 @@ const App = () => {
           </form>
         )}
 
-        {isLoggedIn && view === "home" && (
-          <div style={{ textAlign: 'center' }}>
-            <h3 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Bienvenue, {login} !</h3>
-            <div style={{ marginBottom: '1rem' }}>
-              <h4>Données du capteur :</h4>
-              {sensorData ? (
-                <ul style={{ listStyle: 'none', padding: 0, lineHeight: '1.6' }}>
-                  <li onClick={() => setSelectedMetric('temperature')}>🌡️ Température: {sensorData.valeurs.temperature} °C</li>
-                  <li onClick={() => setSelectedMetric('humidite')}>💧 Humidité: {sensorData.valeurs.humidite} %</li>
-                  <li onClick={() => setSelectedMetric('pression')}>⚡ Pression: {sensorData.valeurs.pression} hPa</li>
+{isLoggedIn && view === "home" && (
+  <div style={{ textAlign: "center" }}>
+    <h3 style={{ fontSize: "1.5rem", marginBottom: "1rem" }}>Bienvenue, {login} !</h3>
 
-                  <li>⏰ Heure: {sensorData.timestamp}</li>
-                </ul>
-              ) : (
-                <p>Chargement des données...</p>
-              )}
-            </div>
-            {selectedMetric && history.length > 0 && (
-              <div style={{ width: '400px', height: '250px', margin: '20px auto', backgroundColor: '#1f2937', borderRadius: 10, padding: '10px', boxShadow: '0 4px 10px rgba(0,0,0,0.5)', color: '#fff' }}>
-                <h4 style={{ textAlign: 'center', marginBottom: '10px' }}>📊 Évolution de {selectedMetric}</h4>
+    {/* 🔹 Données des capteurs */}
+    <div style={{ marginBottom: "1rem" }}>
+      <h4>📡 Données des capteurs :</h4>
+      {sensorData && sensorData.valeurs ? (
+        <ul style={{ listStyle: "none", padding: 0, lineHeight: "1.6" }}>
+          {Object.entries(sensorData.valeurs).map(([key, value]) => (
+            <li 
+              key={key} 
+              onClick={() => setSelectedMetric(key)}
+              style={{ cursor: "pointer", padding: "5px", borderBottom: "1px solid #555" }}
+            >
+              {key} : {value} {/* Affiche le nom et la valeur du capteur */}
+            </li>
+          ))}
+          <li>⏰ Heure: {sensorData.timestamp ?? "Indisponible"}</li>
+        </ul>
+      ) : (
+        <p>🔄 Chargement des données...</p>
+      )}
+    </div>
 
-                <Line
-                  data={{
-                    labels: history.map((point) => point.timestamp),
-                    datasets: [
-                      {
-                        label: selectedMetric,
-                        data: history.map((point) => point[selectedMetric]),
-                        borderColor: '#3b82f6',
-                        backgroundColor: 'rgba(59, 130, 246, 0.2)',
-                        borderWidth: 2,
-                        pointRadius: 4,
-                        pointBackgroundColor: '#fff',
-                      },
-                    ],
-                  }}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: { duration: 500 }, // Animation fluide
-                    plugins: {
-                      legend: { display: false },
-                      tooltip: { backgroundColor: '#333', titleColor: '#fff' },
-                    },
-                    scales: {
-                      x: { ticks: { color: "#fff" } },
-                      y: { ticks: { color: "#fff" }, suggestedMin: 0 },
-                    },
-                  }}
-                />
+    {/* 🔹 Affichage du graphique si un capteur est sélectionné */}
+    {selectedMetric && history.length > 0 && (
+      <div style={{ width: "400px", height: "250px", margin: "20px auto", backgroundColor: "#1f2937", borderRadius: 10, padding: "10px", boxShadow: "0 4px 10px rgba(0,0,0,0.5)", color: "#fff" }}>
+        <h4 style={{ textAlign: "center", marginBottom: "10px" }}>📊 Évolution de {selectedMetric}</h4>
 
-                <button onClick={() => setSelectedMetric(null)} style={{ width: '100%', padding: '8px', borderRadius: '8px', backgroundColor: '#ef4444', color: '#fff', border: 'none', marginTop: '10px' }}>
-                  ❌ Fermer
-                </button>
-              </div>
-            )}
+        <Line
+          data={{
+            labels: history.map((point) => point.timestamp),
+            datasets: [
+              {
+                label: selectedMetric,
+                data: history.map((point) => point.valeurs?.[selectedMetric] ?? null),
+                borderColor: "#3b82f6",
+                backgroundColor: "rgba(59, 130, 246, 0.2)",
+                borderWidth: 2,
+                pointRadius: 4,
+                pointBackgroundColor: "#fff",
+              },
+            ],
+          }}
+          options={{
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 500 }, // Animation fluide
+            plugins: {
+              legend: { display: false },
+              tooltip: { backgroundColor: "#333", titleColor: "#fff" },
+            },
+            scales: {
+              x: { ticks: { color: "#fff" } },
+              y: { ticks: { color: "#fff" }, suggestedMin: 0 },
+            },
+          }}
+        />
 
+        <button onClick={() => setSelectedMetric(null)} style={{ width: "100%", padding: "8px", borderRadius: "8px", backgroundColor: "#ef4444", color: "#fff", border: "none", marginTop: "10px" }}>
+          ❌ Fermer
+        </button>
+      </div>
+    )}
 
 
 
