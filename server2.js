@@ -247,38 +247,58 @@ const verifyToken = (req, res, next) => {
 };
 
 
+const config = [
+    { "name": "de COV","unit": "%", "min": 0, "max": 100, "address": 0 },
+    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 100, "address": 1 },
+    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 100, "address": 2 },
+    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 100, "address": 3 },
+    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 100, "address": 4 },
+    { "name": "de température","unit": "°C", "min": -150, "max": 150, "address": 5 },
+    { "name": "d'humidité","unit": "%", "min": 0, "max": 100, "address": 6 },
+    { "name": "de température","unit": "°C", "min": -150, "max": 150, "address": 7 },
+    { "name": "d'humidité","unit": "%", "min": 0, "max": 100, "address": 8 },
+    { "name": "de température","unit": "°C", "min": -150, "max": 150, "address": 9},
+    { "name": "d'humidité","unit": "%", "min": 0, "max": 100, "address": 10 },
+    { "name": "de température","unit": "°C", "min": -150, "max": 150, "address": 11 },
+    { "name": "d'humidité","unit": "%", "min": 0, "max": 100, "address": 12 },
+    { "name": "d'ambiance","unit": "°C", "min": -150, "max": 150, "address": 13 },
+    { "name": "de CO2","unit": "ppm", "min": 0, "max": 3000, "address": 14 }
+];
+
 
 // Route pour récupérer les vraies données des 15 capteurs
 app.get('/api/capteurs', verifyToken, async (req, res) => {
     console.log('--- Requête reçue sur /api/capteurs ---');
 
+    if (!socket.writable) {
+        console.error('❌ Erreur : Connexion Modbus non établie.');
+        return res.status(500).json({ message: 'Erreur : connexion Modbus non établie.' });
+    }
+
     try {
-        // Lire les registres Modbus pour tous les capteurs
-        const totalRegistres = config.length;  // Total des capteurs
+        // Lire les registres Modbus
+        const totalRegistres = config.length;
         console.log('🔄 Envoi de la requête Modbus pour lire les registres...');
-        
-        const response = await client.readHoldingRegisters(0, totalRegistres); // Lire les registres des capteurs
+
+        const response = await client.readHoldingRegisters(0, totalRegistres);
         const values = response.response._body.values;
 
-        console.log(`✅ Données Modbus brutes reçues : ${JSON.stringify(values)}`); // Afficher les valeurs brutes
+        console.log(`✅ Données Modbus brutes reçues : ${JSON.stringify(values)}`);
 
-        // Construire un tableau avec les données des capteurs
         const capteursData = config.map((capteurConfig, index) => {
-            const value = values[index]; // Lire la valeur correspondante à chaque capteur
-            const valueInRange = Math.max(capteurConfig.min, Math.min(capteurConfig.max, value)); // Assurez-vous que la valeur est dans la plage valide
+            const value = values[index];
+            const valueInRange = Math.max(capteurConfig.min, Math.min(capteurConfig.max, value));
 
             return {
-                capteur_id: capteurConfig.address + 1, // ID du capteur, correspond à l'adresse + 1
+                capteur_id: capteurConfig.address + 1,
                 name: capteurConfig.name,
                 unit: capteurConfig.unit,
-                value: valueInRange, // La valeur lue, ajustée si nécessaire
-                min: capteurConfig.min,
-                max: capteurConfig.max,
+                value: valueInRange,
                 timestamp: new Date().toISOString()
             };
         });
 
-        console.log('🔹 Données des capteurs traitées envoyées au client:', JSON.stringify(capteursData)); // Afficher les données traitées
+        console.log('🔹 Données des capteurs traitées envoyées au client:', JSON.stringify(capteursData));
 
         return res.json(capteursData);
     } catch (error) {
@@ -286,6 +306,7 @@ app.get('/api/capteurs', verifyToken, async (req, res) => {
         return res.status(500).json({ message: 'Erreur lors de la récupération des données des capteurs' });
     }
 });
+
 
 // Gérer la fermeture de connexion proprement
 socket.on('error', (err) => {
