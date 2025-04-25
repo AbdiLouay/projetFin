@@ -2,10 +2,9 @@ import React, { useState, useEffect } from "react";
 import { Line } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend } from 'chart.js';
 
+
 // Enregistre les composants de Chart.js
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
-
-
 
 const App = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -17,9 +16,12 @@ const App = () => {
   const [history, setHistory] = useState([]);
   const [selectedMetric, setSelectedMetric] = useState(null);
 
+
   console.log("Historique des valeurs :", history);
 
+
   const API_URL = "http://192.168.65.227:3000/api";
+
 
   // Fonction pour récupérer le token depuis les cookies
   const getTokenFromCookies = () => {
@@ -27,17 +29,21 @@ const App = () => {
     return match ? match[2] : null;
   };
 
+
   // Fonction pour récupérer les données du capteur
   const fetchSensorData = async () => {
     const token = getTokenFromCookies();
     console.log("Token récupéré depuis les cookies:", token);
   
+    // Vérification si un token est présent
     if (!token) {
       setMessage("⚠️ Vous devez être connecté pour voir les données.");
+      console.log("Token manquant dans la requête.");
       return;
     }
   
     try {
+      // Envoi de la requête à l'API pour récupérer les données des capteurs
       const response = await fetch(`${API_URL}/capteurs`, {
         method: "GET",
         headers: {
@@ -46,50 +52,62 @@ const App = () => {
         },
       });
   
-      console.log("Requête envoyée à", `${API_URL}/capteurs`);
+      console.log("Requête envoyée:", {
+        url: `${API_URL}/capteurs`,
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        }
+      });
   
+      // Vérification de la réponse de l'API
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Erreur serveur: ${response.status} - ${errorText}`);
+        throw new Error('Erreur lors de la récupération des données');
       }
   
-      const capteurs = await response.json();
-      console.log("Données reçues du serveur:", capteurs);
+      // Conversion de la réponse en JSON
+      const data = await response.json();
   
-      if (!Array.isArray(capteurs) || capteurs.length === 0) {
-        throw new Error("Aucun capteur trouvé ou format incorrect.");
+      // Vérification que les données sont valides
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error("Les données reçues sont invalides ou vides");
       }
   
-      // 🔹 Stocker **tous** les capteurs dans le state
-      setSensorData(capteurs);
+      // Ajouter les données au nouvel historique
+      const newHistory = data.map(capteur => ({
+        timestamp: new Date().toLocaleTimeString(), // Ajouter un horodatage
+        capteur_id: capteur.capteur_id,
+        name: capteur.name,
+        unit: capteur.unit,
+        value: parseFloat(capteur.value) || 0, // Convertir en nombre, sinon 0 si impossible
+      }));
   
-      // 🔹 Mettre à jour l'historique (limité à 20 entrées)
-      setHistory(prev => [...prev.slice(-19), {
-        timestamp: new Date().toLocaleTimeString(),
-        valeurs: capteurs.map(capteur => ({
-          id: capteur.capteur_id,
-          name: capteur.name,
-          value: capteur.value,
-          unit: capteur.unit,
-        }))
-      }]);
+      // Mettre à jour l'état des données du capteur et de l'historique
+      setSensorData(data);
+      setHistory(prev => {
+        const updatedHistory = [...prev, ...newHistory];
+        // Limiter l'historique à 20 éléments (max 20 dernières entrées)
+        return updatedHistory.slice(-20);
+      });
   
+      console.log("Données des capteurs:", data);
     } catch (error) {
-      setMessage("⚠️ Erreur lors de la récupération des données.");
-      console.error("Erreur lors de la récupération des données des capteurs:", error);
+      setMessage("⚠️ Erreur de récupération des données du capteur.");
+      console.error("Erreur de la requête:", error);
     }
   };
   
-
-  // Utilisation de useEffect pour récupérer les données à chaque intervalle de 5 secondes
   useEffect(() => {
     let intervalId;
+    // Si l'utilisateur est connecté, récupérer les données des capteurs
     if (isLoggedIn) {
       fetchSensorData();
-      intervalId = setInterval(fetchSensorData, 5000);  // Toutes les 5 secondes
+      intervalId = setInterval(fetchSensorData, 30000); // Rafraîchir toutes les 30 secondes
     }
-    return () => clearInterval(intervalId); // Nettoyage de l'intervalle
+    return () => clearInterval(intervalId); // Nettoyer l'intervalle lorsque le composant est démonté
   }, [isLoggedIn]);
+  
 
   // Fonction pour gérer la connexion
   const handleLogin = async (e) => {
@@ -101,8 +119,10 @@ const App = () => {
         body: JSON.stringify({ login, password }),
       });
 
+
       const data = await response.json();
       console.log('Réponse serveur lors de la connexion:', data); // Afficher la réponse du serveur dans la console
+
 
       if (response.ok) {
         // Sauvegarder le token dans le cookie
@@ -118,6 +138,7 @@ const App = () => {
     }
   };
 
+
   // Fonction pour gérer l'inscription
   const handleRegister = async (e) => {
     e.preventDefault();
@@ -128,8 +149,10 @@ const App = () => {
         body: JSON.stringify({ login, password }),
       });
 
+
       const data = await response.json();
       console.log('Réponse serveur lors de l\'inscription:', data); // Afficher la réponse du serveur dans la console
+
 
       if (response.ok) {
         setMessage("✅ Inscription réussie !");
@@ -143,6 +166,7 @@ const App = () => {
     }
   };
 
+
   // Fonction pour gérer la déconnexion
   const handleLogout = () => {
     // Supprimer le cookie lors de la déconnexion
@@ -150,6 +174,7 @@ const App = () => {
     setIsLoggedIn(false);
     setView("login");
   };
+
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #1e293b, #0f172a)' }}>
@@ -176,7 +201,7 @@ const App = () => {
               onChange={(e) => setPassword(e.target.value)}
               required
             />
-            
+
             <button style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', backgroundColor: view === 'login' ? '#3b82f6' : '#10b981', color: '#fff', border: 'none', marginBottom: '1rem' }}>
               {view === 'login' ? 'Se connecter' : "S'inscrire"}
             </button>
@@ -186,73 +211,62 @@ const App = () => {
           </form>
         )}
 
-{isLoggedIn && view === "home" && (
-  <div style={{ textAlign: "center" }}>
-    <h3 style={{ fontSize: "1.5rem", marginBottom: "1rem" }}>Bienvenue, {login} !</h3>
+        {isLoggedIn && view === "home" && (
+          <div style={{ textAlign: 'center' }}>
+            <h3 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Bienvenue, {login} !</h3>
+            <div style={{ marginBottom: '1rem' }}>
+              <h4>Données du capteur :</h4>
+              {sensorData ? (
+                <ul style={{ listStyle: 'none', padding: 0, lineHeight: '1.6' }}>
+                  {sensorData.map((capteur) => (
+                    <li key={capteur.capteur_id} onClick={() => setSelectedMetric(capteur.name)}>
+                      {capteur.name}: {capteur.value} {capteur.unit}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>Chargement des données...</p>
+              )}
+            </div>
 
-    {/* 🔹 Données des capteurs */}
-    <div style={{ marginBottom: "1rem" }}>
-      <h4>📡 Données des capteurs :</h4>
-      {sensorData && sensorData.valeurs ? (
-        <ul style={{ listStyle: "none", padding: 0, lineHeight: "1.6" }}>
-          {Object.entries(sensorData.valeurs).map(([key, value]) => (
-            <li 
-              key={key} 
-              onClick={() => setSelectedMetric(key)}
-              style={{ cursor: "pointer", padding: "5px", borderBottom: "1px solid #555" }}
-            >
-              {key} : {value} {/* Affiche le nom et la valeur du capteur */}
-            </li>
-          ))}
-          <li>⏰ Heure: {sensorData.timestamp ?? "Indisponible"}</li>
-        </ul>
-      ) : (
-        <p>🔄 Chargement des données...</p>
-      )}
-    </div>
+            {selectedMetric && history.length > 0 && (
+              <div style={{ width: '400px', height: '250px', margin: '20px auto', backgroundColor: '#1f2937', borderRadius: 10, padding: '10px', boxShadow: '0 4px 10px rgba(0,0,0,0.5)', color: '#fff' }}>
+                <h4 style={{ textAlign: 'center', marginBottom: '10px' }}>📊 Évolution de {selectedMetric}</h4>
 
-    {/* 🔹 Affichage du graphique si un capteur est sélectionné */}
-    {selectedMetric && history.length > 0 && (
-      <div style={{ width: "400px", height: "250px", margin: "20px auto", backgroundColor: "#1f2937", borderRadius: 10, padding: "10px", boxShadow: "0 4px 10px rgba(0,0,0,0.5)", color: "#fff" }}>
-        <h4 style={{ textAlign: "center", marginBottom: "10px" }}>📊 Évolution de {selectedMetric}</h4>
-
-        <Line
-          data={{
-            labels: history.map((point) => point.timestamp),
-            datasets: [
-              {
-                label: selectedMetric,
-                data: history.map((point) => point.valeurs?.[selectedMetric] ?? null),
-                borderColor: "#3b82f6",
-                backgroundColor: "rgba(59, 130, 246, 0.2)",
-                borderWidth: 2,
-                pointRadius: 4,
-                pointBackgroundColor: "#fff",
-              },
-            ],
-          }}
-          options={{
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: { duration: 500 }, // Animation fluide
-            plugins: {
-              legend: { display: false },
-              tooltip: { backgroundColor: "#333", titleColor: "#fff" },
-            },
-            scales: {
-              x: { ticks: { color: "#fff" } },
-              y: { ticks: { color: "#fff" }, suggestedMin: 0 },
-            },
-          }}
-        />
-
-        <button onClick={() => setSelectedMetric(null)} style={{ width: "100%", padding: "8px", borderRadius: "8px", backgroundColor: "#ef4444", color: "#fff", border: "none", marginTop: "10px" }}>
-          ❌ Fermer
-        </button>
-      </div>
-    )}
-
-
+                <Line
+                  data={{
+                    labels: history.map((point) => point.timestamp),
+                    datasets: [
+                      {
+                        label: selectedMetric,
+                        data: history.map((point) => point.value),  // Utiliser `value` pour le graphique
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                        borderWidth: 2,
+                        pointRadius: 4,
+                        pointBackgroundColor: '#fff',
+                      },
+                    ],
+                  }}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 500 }, // Animation fluide
+                    plugins: {
+                      legend: { display: false },
+                      tooltip: { backgroundColor: '#333', titleColor: '#fff' },
+                    },
+                    scales: {
+                      x: { ticks: { color: "#fff" } },
+                      y: { ticks: { color: "#fff" }, suggestedMin: 0 },
+                    },
+                  }}
+                />
+                <button onClick={() => setSelectedMetric(null)} style={{ width: '100%', padding: '8px', borderRadius: '8px', backgroundColor: '#ef4444', color: '#fff', border: 'none', marginTop: '10px' }}>
+                  ❌ Fermer
+                </button>
+              </div>
+            )}
 
             <button style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', backgroundColor: '#ef4444', color: '#fff', border: 'none' }} onClick={handleLogout}>
               Déconnexion
@@ -263,5 +277,6 @@ const App = () => {
     </div>
   );
 };
+
 
 export default App;

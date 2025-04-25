@@ -43,7 +43,7 @@ app.use((req, res, next) => {
 
 // Se connecter au serveur Modbus
 socket.connect(MODBUS_PORT, MODBUS_SERVER_IP, () => {
-    console.log('✅ Connexion au serveur Modbus réussie');
+    console.log(' Connexion au serveur Modbus réussie');
 });
 
 // Configuration de la base de données
@@ -130,7 +130,7 @@ app.post('/api/login', [
 ], (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-        console.warn(`[${new Date().toISOString()}] ❌ Données invalides reçues`, errors.array());
+        console.warn(`[${new Date().toISOString()}]  Données invalides reçues`, errors.array());
         return res.status(400).json({ message: 'Données invalides', errors: errors.array() });
     }
 
@@ -139,25 +139,25 @@ app.post('/api/login', [
 
     db.query('SELECT * FROM Utilisateur WHERE nom = ?', [login], (err, results) => {
         if (err) {
-            console.error(`[${new Date().toISOString()}] ❌ Erreur lors de la recherche de l'utilisateur:`, err);
+            console.error(`[${new Date().toISOString()}]  Erreur lors de la recherche de l'utilisateur:`, err);
             return res.status(500).json({ message: 'Erreur interne du serveur' });
         }
         if (results.length === 0) {
-            console.warn(`[${new Date().toISOString()}] ⚠️ Utilisateur non trouvé: ${login}`);
+            console.warn(`[${new Date().toISOString()}] Utilisateur non trouvé: ${login}`);
             return res.status(401).json({ message: 'Identifiants invalides' });
         }
 
         const user = results[0];
-        console.log(`[${new Date().toISOString()}] ✅ Utilisateur trouvé: ${user.nom}`);
+        console.log(`[${new Date().toISOString()}] Utilisateur trouvé: ${user.nom}`);
 
         // Vérifier le mot de passe
         bcrypt.compare(password, user.mot_de_passe, (err, isMatch) => {
             if (err) {
-                console.error(`[${new Date().toISOString()}] ❌ Erreur lors de la comparaison des mots de passe:`, err);
+                console.error(`[${new Date().toISOString()}]  Erreur lors de la comparaison des mots de passe:`, err);
                 return res.status(500).json({ message: 'Erreur interne du serveur' });
             }
             if (!isMatch) {
-                console.warn(`[${new Date().toISOString()}] ⚠️ Mot de passe incorrect pour: ${login}`);
+                console.warn(`[${new Date().toISOString()}]  Mot de passe incorrect pour: ${login}`);
                 return res.status(401).json({ message: 'Identifiants invalides' });
             }
 
@@ -167,16 +167,16 @@ app.post('/api/login', [
                 SECRET_KEY,
                 { expiresIn: '4h' }
             );
-            console.log(`[${new Date().toISOString()}] ✅ Connexion réussie, token généré pour ${login}: ${nouveauToken}`);
+            console.log(`[${new Date().toISOString()}]  Connexion réussie, token généré pour ${login}: ${nouveauToken}`);
 
             // Mettre à jour le token en base de données
             db.query('UPDATE Utilisateur SET token = ? WHERE id_utilisateur = ?', [nouveauToken, user.id_utilisateur], (err) => {
                 if (err) {
-                    console.error(`[${new Date().toISOString()}] ❌ Erreur lors de la mise à jour du token en base:`, err);
+                    console.error(`[${new Date().toISOString()}]  Erreur lors de la mise à jour du token en base:`, err);
                     return res.status(500).json({ message: 'Erreur interne du serveur' });
                 }
 
-                console.log(`[${new Date().toISOString()}] ✅ Nouveau token enregistré en base pour ${login}`);
+                console.log(`[${new Date().toISOString()}]  Nouveau token enregistré en base pour ${login}`);
 
                 res.cookie('token', 'valeur-du-token', {
                     secure: false,    // Désactive secure si tu es en HTTP
@@ -211,22 +211,22 @@ const verifyToken = (req, res, next) => {
     let token = req.cookies.token || req.headers['authorization']?.split(' ')[1];  // Récupérer le token depuis Authorization
 
     if (!token) {
-        console.warn(`[${new Date().toISOString()}] ⚠️ Accès refusé: Aucun token trouvé dans les cookies ou les headers.`);
+        console.warn(`[${new Date().toISOString()}] Accès refusé: Aucun token trouvé dans les cookies ou les headers.`);
         return res.status(403).json({ message: 'Token manquant' });
     }
 
-    console.log(`[${new Date().toISOString()}] ✅ Token trouvé dans les cookies ou les headers: ${token.substring(0, 10)}... (raccourci pour sécurité)`);
+    console.log(`[${new Date().toISOString()}] Token trouvé dans les cookies ou les headers: ${token.substring(0, 10)}... (raccourci pour sécurité)`);
 
     // Vérification du token JWT
     jwt.verify(token, SECRET_KEY, (err, decoded) => {
         if (err) {
-            console.error(`[${new Date().toISOString()}] ❌ Échec de la vérification du token.`);
+            console.error(`[${new Date().toISOString()}] Échec de la vérification du token.`);
             
             // Log de l'erreur spécifique
             console.error(`[${new Date().toISOString()}] Détails de l'erreur:`, err);
 
             if (err.name === 'TokenExpiredError') {
-                console.warn('⚠️ Token expiré, demande de renouvellement nécessaire.');
+                console.warn(' Token expiré, demande de renouvellement nécessaire.');
                 return res.status(401).json({ message: 'Token expiré' });
             }
 
@@ -234,7 +234,7 @@ const verifyToken = (req, res, next) => {
             return res.status(401).json({ message: 'Token invalide' });
         }
 
-        console.log(`[${new Date().toISOString()}] ✅ Token valide. Utilisateur: ${decoded.nom}, Rôle: ${decoded.role}`);
+        console.log(`[${new Date().toISOString()}] Token valide. Utilisateur: ${decoded.nom}, Rôle: ${decoded.role}`);
         
         // Ajouter l'utilisateur décodé à la requête
         req.user = decoded;
@@ -271,19 +271,19 @@ app.get('/api/capteurs', verifyToken, async (req, res) => {
     console.log('--- Requête reçue sur /api/capteurs ---');
 
     if (!socket.writable) {
-        console.error('❌ Erreur : Connexion Modbus non établie.');
+        console.error(' Erreur : Connexion Modbus non établie.');
         return res.status(500).json({ message: 'Erreur : connexion Modbus non établie.' });
     }
 
     try {
         // Lire les registres Modbus
         const totalRegistres = config.length;
-        console.log('🔄 Envoi de la requête Modbus pour lire les registres...');
+        console.log('Envoi de la requête Modbus pour lire les registres');
 
         const response = await client.readHoldingRegisters(0, totalRegistres);
         const values = response.response._body.values;
 
-        console.log(`✅ Données Modbus brutes reçues : ${JSON.stringify(values)}`);
+        console.log(`Données Modbus brutes reçues : ${JSON.stringify(values)}`);
 
         const capteursData = config.map((capteurConfig, index) => {
             const value = values[index];
@@ -302,7 +302,7 @@ app.get('/api/capteurs', verifyToken, async (req, res) => {
 
         return res.json(capteursData);
     } catch (error) {
-        console.error('❌ Erreur lors de la lecture Modbus :', error);
+        console.error('Erreur lors de la lecture Modbus :', error);
         return res.status(500).json({ message: 'Erreur lors de la récupération des données des capteurs' });
     }
 });
@@ -310,11 +310,51 @@ app.get('/api/capteurs', verifyToken, async (req, res) => {
 
 // Gérer la fermeture de connexion proprement
 socket.on('error', (err) => {
-    console.error('❌ Erreur de connexion Modbus:', err.message);
+    console.error('Erreur de connexion Modbus:', err.message);
 });
 
 socket.on('close', () => {
-    console.log('🔴 Connexion Modbus fermée');
+    console.log('Connexion Modbus fermée');
+});
+
+
+// Route pour enregistrer les données des capteurs
+app.post('/enregistrer', (req, res) => {
+    console.log('Requête reçue sur /enregistrer');
+
+    const capteursData = req.body; // Données envoyées en JSON
+    console.log('Données reçues:', JSON.stringify(capteursData, null, 2));
+
+    if (!Array.isArray(capteursData) || capteursData.length === 0) {
+        console.error(' Aucune donnée reçue ou format incorrect');
+        return res.status(400).json({ error: 'Aucune donnée reçue ou format incorrect' });
+    }
+
+    // Préparation de la requête SQL
+    const sql = `INSERT INTO Mesure (id_session, id_capteur, type_mesure, valeur, unite, date_heure, est_archive) VALUES ?`;
+    
+    // Vérifier que chaque capteur a bien les bonnes valeurs
+    const values = capteursData.map(capteur => [
+        capteur.id_session || null, // Assurez-vous que ce champ est nullable en BDD
+        capteur.capteur_id, // Correction : capteur_id au lieu de id_capteur
+        capteur.name, // Correction : name au lieu de type_mesure
+        capteur.value, // Correction : value au lieu de valeur
+        capteur.unit, // Correction : unit au lieu de unite
+        new Date().toISOString(), // Timestamp actuel
+        0 // est_archive mis à 0 par défaut
+    ]);
+
+    console.log('Requête SQL préparée:', sql);
+    console.log('Valeurs à insérer:', values);
+
+    db.query(sql, [values], (err, result) => {
+        if (err) {
+            console.error('Erreur lors de l\'insertion des données :', err);
+            return res.status(500).json({ error: 'Erreur lors de l\'enregistrement en BDD' });
+        }
+        console.log(`${result.affectedRows} enregistrement(s) ajouté(s)`);
+        res.status(200).json({ message: `${result.affectedRows} enregistrement(s) ajouté(s)` });
+    });
 });
 
 
@@ -327,21 +367,67 @@ app.get('/api/get-token/:id', (req, res) => {
 
     db.query(sql, [userId], (err, result) => {
         if (err) {
-            console.error('❌ Erreur MySQL:', err);
+            console.error(' Erreur MySQL:', err);
             res.status(500).json({ error: 'Erreur serveur' });
             return;
         }
 
         if (result.length === 0) {
-            console.warn('⚠️ Token non trouvé pour l\'utilisateur ID:', userId);
+            console.warn('Token non trouvé pour l\'utilisateur ID:', userId);
             res.status(404).json({ error: 'Token non trouvé' });
         } else {
-            console.log(`✅ Token trouvé pour l'utilisateur ID: ${userId}`);
+            console.log(` Token trouvé pour l'utilisateur ID: ${userId}`);
             res.json({ token: result[0].token });
         }
     });
 });
 
+app.post('/api/capteur', verifyToken, (req, res) => {
+    // On vérifie que le corps de la requête est un tableau
+    if (!Array.isArray(req.body) || req.body.length === 0) {
+        return res.status(400).json({ message: "Le body doit être un tableau non vide." });
+    }
+
+    // Option 1 : Traitement itératif (insertion individuelle)
+    let insertedCount = 0;
+    let errors = [];
+
+    req.body.forEach((capteur) => {
+        const { type, emplacement } = capteur;
+        if (!type || !emplacement) {
+            errors.push("Champ manquant pour un capteur.");
+            return;
+        }
+        const sql = 'INSERT INTO Capteur (type, emplacement) VALUES (?, ?)';
+        db.query(sql, [type, emplacement], (err, result) => {
+            if (err) {
+                errors.push(err);
+            } else {
+                insertedCount++;
+            }
+            // Quand toutes les requêtes sont traitées, on envoie la réponse
+            if (insertedCount + errors.length === req.body.length) {
+                if(errors.length > 0){
+                    return res.status(500).json({ message: "Erreur lors de l'insertion de certains capteurs", errors });
+                }
+                return res.status(201).json({ message: "Tous les capteurs ont été enregistrés avec succès." });
+            }
+        });
+    });
+});
+
+app.delete('/api/capteurs', verifyToken, (req, res) => {
+    const deleteCapteurs = 'DELETE FROM Capteur';
+
+    db.query(deleteCapteurs, (err, result) => {
+        if (err) {
+            console.error('Erreur lors de la suppression des capteurs :', err);
+            return res.status(500).json({ message: 'Erreur lors de la suppression des capteurs.' });
+        }
+
+        res.status(200).json({ message: 'Tous les capteurs ont été supprimés.' });
+    });
+});
 
 // Lancer le serveur
 app.listen(PORT, () => {
