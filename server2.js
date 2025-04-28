@@ -50,7 +50,7 @@ socket.connect(MODBUS_PORT, MODBUS_SERVER_IP, () => {
 const db = mysql.createConnection({
     host: '192.168.65.227',
     user: 'chef',
-    password: 'root',
+    password: 'Root@2025',
     database: 'vmc1',
 });
 
