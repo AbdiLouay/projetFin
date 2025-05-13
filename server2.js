@@ -383,52 +383,139 @@ app.get('/api/get-token/:id', (req, res) => {
 });
 
 app.post('/api/capteur', verifyToken, (req, res) => {
-    // On vérifie que le corps de la requête est un tableau
+    // Vérifie que la requête est un tableau
     if (!Array.isArray(req.body) || req.body.length === 0) {
-        return res.status(400).json({ message: "Le body doit être un tableau non vide." });
+    return res.status(400).json({ message: "Le body doit être un tableau non vide." });
     }
-
-    // Option 1 : Traitement itératif (insertion individuelle)
+    
     let insertedCount = 0;
     let errors = [];
-
+    
     req.body.forEach((capteur) => {
-        const { type, emplacement } = capteur;
-        if (!type || !emplacement) {
-            errors.push("Champ manquant pour un capteur.");
-            return;
+    const { id_capteur, type, valeur, date_heure } = capteur;
+    
+    // Vérifie que tous les champs sont présents
+    if (id_capteur == null || !type || valeur == null || !date_heure) {
+      errors.push("Champ manquant pour un capteur.");
+      return;
+    }
+    
+    const sql = 'INSERT INTO capteur (id_capteur, type, valeur, date_heure) VALUES (?, ?, ?, ?)';
+    db.query(sql, [id_capteur, type, valeur, date_heure], (err, result) => {
+      if (err) {
+        errors.push(err);
+      } else {
+        insertedCount++;
+      }
+    
+      // Quand toutes les requêtes sont traitées
+      if (insertedCount + errors.length === req.body.length) {
+        if (errors.length > 0) {
+          return res.status(500).json({ message: "Erreur lors de l'insertion de certains capteurs.", errors });
         }
-        const sql = 'INSERT INTO Capteur (type, emplacement) VALUES (?, ?)';
-        db.query(sql, [type, emplacement], (err, result) => {
-            if (err) {
-                errors.push(err);
-            } else {
-                insertedCount++;
-            }
-            // Quand toutes les requêtes sont traitées, on envoie la réponse
-            if (insertedCount + errors.length === req.body.length) {
-                if(errors.length > 0){
-                    return res.status(500).json({ message: "Erreur lors de l'insertion de certains capteurs", errors });
-                }
-                return res.status(201).json({ message: "Tous les capteurs ont été enregistrés avec succès." });
-            }
-        });
+        return res.status(201).json({ message: "Tous les capteurs ont été enregistrés avec succès." });
+      }
     });
+  });
 });
 
 app.delete('/api/capteurs', verifyToken, (req, res) => {
-    const deleteCapteurs = 'DELETE FROM Capteur';
-
+    const deleteCapteurs = 'DELETE FROM capteur'; // attention ici : c'est bien ta nouvelle table "capteur"
+    
     db.query(deleteCapteurs, (err, result) => {
-        if (err) {
-            console.error('Erreur lors de la suppression des capteurs :', err);
-            return res.status(500).json({ message: 'Erreur lors de la suppression des capteurs.' });
-        }
-
-        res.status(200).json({ message: 'Tous les capteurs ont été supprimés.' });
-    });
+    if (err) {
+    console.error('Erreur lors de la suppression des capteurs :', err);
+    return res.status(500).json({ message: 'Erreur lors de la suppression des capteurs.' });
+    }
+    
+    res.status(200).json({ message: 'Tous les capteurs ont été supprimés.' });
+  });
 });
 
+app.post('/api/session', verifyToken, (req, res) => {
+    const { nom, description, date_debut, date_fin, intervalle, id_utilisateur } = req.body;
+  
+    // Vérifie uniquement les champs obligatoires
+    if (!nom || !date_debut || !intervalle || !id_utilisateur) {
+      return res.status(400).json({
+        message: "Champs requis manquants : nom, date_debut, intervalle, id_utilisateur."
+      });
+    }
+  
+    const sql = `
+      INSERT INTO SessionMesure (nom, description, date_debut, date_fin, intervalle, id_utilisateur)
+      VALUES (?, ?, ?, ?, ?, ?)`;
+  
+    db.query(sql, [
+      nom,
+      description || "",
+      date_debut,
+      date_fin || null,
+      intervalle,
+      id_utilisateur
+    ], (err, result) => {
+      if (err) {
+        return res.status(500).json({ message: "Erreur d'enregistrement", error: err });
+      }
+      res.status(201).json({
+        message: "Session enregistrée avec succès.",
+        id_session: result.insertId
+      });
+    });
+  });
+  
+  app.put('/api/session/fin/:id', verifyToken, (req, res) => {
+    const id_session = req.params.id;
+    const { date_fin } = req.body;
+  
+    if (!date_fin) {
+      return res.status(400).json({ message: "Champ 'date_fin' requis." });
+    }
+  
+    const sql = `UPDATE SessionMesure SET date_fin = ? WHERE id_session = ?`;
+  
+    db.query(sql, [date_fin, id_session], (err, result) => {
+      if (err) return res.status(500).json({ message: "Erreur lors de la mise à jour de la session.", error: err });
+  
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: "Session non trouvée." });
+      }
+  
+      res.status(200).json({ message: "Date de fin enregistrée avec succès." });
+    });
+  });
+  
+  app.get('/api/sessions', verifyToken, (req, res) => {
+    const sql = `
+      SELECT 
+        s.id_session,
+        s.nom,
+        s.description,
+        s.date_debut,
+        s.date_fin,
+        s.intervalle,
+        u.id_utilisateur,
+        u.nom AS nom_utilisateur
+      FROM SessionMesure s
+      JOIN Utilisateur u ON s.id_utilisateur = u.id_utilisateur
+    `;
+  
+    db.query(sql, (err, results) => {
+      if (err) {
+        return res.status(500).json({
+          message: "Erreur lors de la récupération des sessions",
+          error: err
+        });
+      }
+  
+      if (results.length === 0) {
+        return res.status(404).json({ message: "Aucune session trouvée." });
+      }
+  
+      res.status(200).json(results);
+    });
+  });
+  
 // Lancer le serveur
 app.listen(PORT, () => {
     console.log(`Serveur backend en écoute sur http://192.168.65.227:${PORT}`);
