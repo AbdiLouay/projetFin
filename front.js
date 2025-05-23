@@ -1,11 +1,28 @@
 import React, { useState, useEffect } from "react";
-import { Line } from 'react-chartjs-2';
-import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend } from 'chart.js';
+import { Line } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+} from "chart.js";
+import "./App.css";
 
-// Enregistre les composants de Chart.js
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend
+);
 
-
+const API_URL = "http://192.168.65.227:3000/api";
 
 const App = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -13,241 +30,309 @@ const App = () => {
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
-  const [sensorData, setSensorData] = useState(null);
+  const [sensorData, setSensorData] = useState([]);
   const [history, setHistory] = useState([]);
   const [selectedMetric, setSelectedMetric] = useState(null);
+  const [theme, setTheme] = useState("dark");
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedHistory, setRecordedHistory] = useState([]);
+  const [userFilter, setUserFilter] = useState("");
+  const [viewingGlobalHistory, setViewingGlobalHistory] = useState(null);
 
-  console.log("Historique des valeurs :", history);
+  useEffect(() => {
+    const savedLogin = localStorage.getItem("login");
+    if (savedLogin) setLogin(savedLogin);
+  }, []);
 
-  const API_URL = "http://192.168.65.227:3000/api";
-
-  // Fonction pour récupérer le token depuis les cookies
   const getTokenFromCookies = () => {
     const match = document.cookie.match(/(^| )token=([^;]+)/);
     return match ? match[2] : null;
   };
 
-  // Fonction pour récupérer les données du capteur
   const fetchSensorData = async () => {
     const token = getTokenFromCookies();
-    console.log("Token récupéré depuis les cookies:", token); // Affichage du token dans la console pour déboguer
-
     if (!token) {
-      setMessage("⚠️ Vous devez être connecté pour voir les données.");
-      console.log("Token manquant dans la requête.");
+      setMessage("❌ Vous devez être connecté.");
       return;
     }
 
     try {
-      const response = await fetch(`${API_URL}/capteur`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,  // Envoi du token dans les headers
-        },
+      const response = await fetch(`${API_URL}/capteurs`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-
-      // Afficher la requête envoyée pour la récupération des données du capteur
-      console.log("Requête envoyée:", {
-        url: `${API_URL}/capteur`,
-        method: "GET",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json",
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('Erreur lors de la récupération des données');
-      }
 
       const data = await response.json();
+
+      if (!response.ok) {
+        setMessage(data.message || "Erreur récupération capteurs.");
+        return;
+      }
+
+      const timestamp = Date.now();
+      const entries = data.map((capteur) => ({
+        timestamp,
+        capteur_id: capteur.capteur_id,
+        name: capteur.name,
+        unit: capteur.unit,
+        value: parseFloat(capteur.value) || 0,
+      }));
+
       setSensorData(data);
-      setHistory(prev => [...prev.slice(-19), { 
-        timestamp: new Date().toLocaleTimeString(), 
-        temperature: data.valeurs.temperature, 
-        humidite: data.valeurs.humidite, 
-        pression: data.valeurs.pression 
-      }]);
-      
-      console.log("Données du capteur:", data);  // Affichage des données dans la console
-    } catch (error) {
-      setMessage("⚠️ Erreur de récupération des données du capteur.");
-      console.error("Erreur de la requête:", error);  // Affiche l'erreur dans la console pour débogage
+      setHistory((prev) => [...prev, ...entries].slice(-100));
+      if (isRecording) setRecordedHistory((prev) => [...prev, ...entries]);
+    } catch {
+      setMessage("⚠️ Erreur serveur capteurs");
     }
   };
 
-  // Utilisation de useEffect pour récupérer les données à chaque intervalle de 5 secondes
   useEffect(() => {
-    let intervalId;
-    if (isLoggedIn) {
-      fetchSensorData();
-      intervalId = setInterval(fetchSensorData, 5000);  // Toutes les 5 secondes
-    }
-    return () => clearInterval(intervalId); // Nettoyage de l'intervalle
+    if (!isLoggedIn) return;
+    fetchSensorData();
+    const interval = setInterval(fetchSensorData, 30000);
+    return () => clearInterval(interval);
   }, [isLoggedIn]);
 
-  // Fonction pour gérer la connexion
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch(`${API_URL}/login`, {
+      const res = await fetch(`${API_URL}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login, password }),
       });
-
-      const data = await response.json();
-      console.log('Réponse serveur lors de la connexion:', data); // Afficher la réponse du serveur dans la console
-
-      if (response.ok) {
-        // Sauvegarder le token dans le cookie
-        document.cookie = `token=${data.data.token}; path=/; max-age=3600`; // Cookie valable 1 heure (3600 secondes)
+      const data = await res.json();
+      if (res.ok) {
+        document.cookie = `token=${data.data.token}; path=/; max-age=3600`;
+        localStorage.setItem("login", login);
         setIsLoggedIn(true);
         setView("home");
+        setMessage("");
       } else {
-        setMessage(data.message || "❌ Identifiants incorrects !");
+        setMessage(data.message || "❌ Identifiants invalides.");
       }
-    } catch (error) {
-      setMessage("⚠️ Erreur de connexion au serveur.");
-      console.error("Erreur de la connexion:", error);  // Affiche l'erreur dans la console pour débogage
+    } catch {
+      setMessage("⚠️ Erreur serveur.");
     }
   };
 
-  // Fonction pour gérer l'inscription
+  const handleLogout = () => {
+    setIsLoggedIn(false);
+    setLogin("");
+    setPassword("");
+    document.cookie = "token=; Max-Age=0; path=/;";
+    localStorage.removeItem("login");
+  };
+
   const handleRegister = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch(`${API_URL}/register`, {
+      const res = await fetch(`${API_URL}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login, password }),
       });
-
-      const data = await response.json();
-      console.log('Réponse serveur lors de l\'inscription:', data); // Afficher la réponse du serveur dans la console
-
-      if (response.ok) {
+      const data = await res.json();
+      if (res.ok) {
         setMessage("✅ Inscription réussie !");
-        setTimeout(() => setView("login"), 1000);
+        setView("login");
       } else {
-        setMessage(data.message || "⚠️ Erreur d'inscription.");
+        setMessage(data.message || "❌ Erreur lors de l'inscription.");
       }
-    } catch (error) {
-      setMessage("⚠️ Erreur de connexion au serveur.");
-      console.error("Erreur lors de l'inscription:", error);  // Affiche l'erreur dans la console pour débogage
+    } catch {
+      setMessage("⚠️ Erreur serveur.");
     }
   };
 
-  // Fonction pour gérer la déconnexion
-  const handleLogout = () => {
-    // Supprimer le cookie lors de la déconnexion
-    document.cookie = "token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC"; // Expirer le cookie
-    setIsLoggedIn(false);
-    setView("login");
+  const handleSaveRecording = async () => {
+    const name = prompt("Nom de l'enregistrement :");
+    if (!name) return alert("❌ Vous devez entrer un nom.");
+    const description = prompt("Description :");
+    if (!description) return alert("❌ Vous devez entrer une description.");
+
+    const date = new Date();
+    const formattedDate = date.toISOString().slice(0, 19).replace("T", " ");
+
+    const sessionToSend = {
+      nom: name,
+      description,
+      date_debut: formattedDate,
+      intervalle: 30,
+    };
+
+    const token = getTokenFromCookies();
+    if (!token) return alert("❌ Token invalide ou manquant.");
+
+    try {
+      const res = await fetch(`${API_URL}/session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(sessionToSend),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        if (result.message === "Token invalide ou expiré.") {
+          alert("Session expirée. Veuillez vous reconnecter.");
+          handleLogout();
+        } else {
+          alert("Erreur lors de l’envoi : " + result.message);
+        }
+        return;
+      }
+
+      alert("✅ Session sauvegardée !");
+    } catch {
+      alert("❌ Erreur serveur ou réseau.");
+    }
+
+    const saved = {
+      name,
+      description,
+      user: login,
+      date: date.toLocaleString(),
+      data: recordedHistory,
+    };
+
+    const existing = JSON.parse(localStorage.getItem("globalHistories") || "[]");
+    localStorage.setItem("globalHistories", JSON.stringify([...existing, saved]));
+
+    setIsRecording(false);
+    setRecordedHistory([]);
   };
 
+  const deleteRecording = (entry) => {
+    const histories = JSON.parse(localStorage.getItem("globalHistories") || "[]");
+    const updated = histories.filter((h) => h.name !== entry.name || h.date !== entry.date);
+    localStorage.setItem("globalHistories", JSON.stringify(updated));
+    setViewingGlobalHistory(null);
+  };
+
+  const getColorForMetric = (name) => {
+    const hash = [...name].reduce((acc, c) => acc + c.charCodeAt(0), 0);
+    return `hsl(${hash % 360}, 70%, 50%)`;
+  };
+
+  const renderChart = (dataList, uniqueKey = "") => {
+    const labels = Array.from(new Set(dataList.map((d) => d.timestamp)))
+      .sort()
+      .map((ts) =>
+        new Date(ts).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+      );
+
+    const metrics = [...new Set(dataList.map((d) => d.name))];
+    const datasets = metrics.map((metric) => ({
+      label: metric,
+      data: dataList.filter((d) => d.name === metric).map((d) => d.value),
+      borderWidth: 2,
+      tension: 0.4,
+      pointRadius: 2,
+      borderColor: getColorForMetric(metric),
+    }));
+
+    return (
+      <Line
+        key={uniqueKey}
+        data={{ labels, datasets }}
+        options={{
+          responsive: true,
+          plugins: { legend: { display: true } },
+        }}
+      />
+    );
+  };
+
+  const filteredHistories = (JSON.parse(localStorage.getItem("globalHistories") || "[]") || [])
+    .filter((r) => (r.user || "").toLowerCase().includes(userFilter.toLowerCase()))
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #1e293b, #0f172a)' }}>
-      <div style={{ width: '100%', maxWidth: '400px', backgroundColor: '#1f2937', padding: '2rem', borderRadius: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.5)', color: '#fff' }}>
-        <h2 style={{ fontSize: '1.8rem', textAlign: 'center', marginBottom: '1.5rem' }}>🌬️ VMC UFA</h2>
+    <div className={`container ${theme}`}>
+      <header className="navbar">
+        <h2>🌬️ VMC UFA</h2>
+        <div>
+          <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+            {theme === "dark" ? "🌞" : "🌙"}
+          </button>
+          {isLoggedIn && <button onClick={handleLogout}>🚪</button>}
+        </div>
+      </header>
 
-        {message && <p style={{ color: '#f87171', textAlign: 'center', marginBottom: '1rem' }}>{message}</p>}
+      <main>
+        {message && <p className="message">{message}</p>}
 
-        {!isLoggedIn && (
-          <form onSubmit={view === 'login' ? handleLogin : handleRegister}>
+        {!isLoggedIn ? (
+          <form onSubmit={view === "login" ? handleLogin : handleRegister} className="auth-form">
+            <input value={login} onChange={(e) => setLogin(e.target.value)} placeholder="Utilisateur" required />
             <input
-              style={{ width: '100%', padding: '0.8rem', marginBottom: '1rem', borderRadius: '8px', border: '1px solid #4b5563', background: '#334155', color: '#e2e8f0' }}
-              type="text"
-              placeholder="Nom d'utilisateur"
-              value={login}
-              onChange={(e) => setLogin(e.target.value)}
-              required
-            />
-            <input
-              style={{ width: '100%', padding: '0.8rem', marginBottom: '1rem', borderRadius: '8px', border: '1px solid #4b5563', background: '#334155', color: '#e2e8f0' }}
               type="password"
-              placeholder="Mot de passe"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              placeholder="Mot de passe"
               required
             />
-            
-            <button style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', backgroundColor: view === 'login' ? '#3b82f6' : '#10b981', color: '#fff', border: 'none', marginBottom: '1rem' }}>
-              {view === 'login' ? 'Se connecter' : "S'inscrire"}
-            </button>
-            <button type="button" onClick={() => setView(view === 'login' ? 'register' : 'login')} style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', backgroundColor: '#4b5563', color: '#fff' }}>
-              {view === 'login' ? 'Créer un compte' : 'Retour à la connexion'}
+            <button type="submit">{view === "login" ? "🔐 Connexion" : "📝 Inscription"}</button>
+            <button type="button" onClick={() => setView(view === "login" ? "register" : "login")}>
+              Changer mode
             </button>
           </form>
-        )}
+        ) : (
+          <>
+            <h3>👋 Bonjour {login}</h3>
+            <button onClick={fetchSensorData}>🔄 Actualiser</button>
+            <button onClick={() => setIsRecording(!isRecording)}>
+              {isRecording ? "⏹️ Stop" : "▶️ Enregistrement"}
+            </button>
+            {isRecording && <button onClick={handleSaveRecording}>💾 Sauvegarder</button>}
 
-        {isLoggedIn && view === "home" && (
-          <div style={{ textAlign: 'center' }}>
-            <h3 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Bienvenue, {login} !</h3>
-            <div style={{ marginBottom: '1rem' }}>
-              <h4>Données du capteur :</h4>
-              {sensorData ? (
-                <ul style={{ listStyle: 'none', padding: 0, lineHeight: '1.6' }}>
-                  <li onClick={() => setSelectedMetric('temperature')}>🌡️ Température: {sensorData.valeurs.temperature} °C</li>
-                  <li onClick={() => setSelectedMetric('humidite')}>💧 Humidité: {sensorData.valeurs.humidite} %</li>
-                  <li onClick={() => setSelectedMetric('pression')}>⚡ Pression: {sensorData.valeurs.pression} hPa</li>
+            <input
+              placeholder="🔍 Rechercher un utilisateur"
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
+            />
 
-                  <li>⏰ Heure: {sensorData.timestamp}</li>
-                </ul>
-              ) : (
-                <p>Chargement des données...</p>
-              )}
+            <div className="sensor-grid">
+              {sensorData.map((c) => (
+                <div key={c.capteur_id} onClick={() => setSelectedMetric(c.name)} className="sensor-card">
+                  <strong>{c.name}</strong>: {c.value} {c.unit}
+                </div>
+              ))}
             </div>
-            {selectedMetric && history.length > 0 && (
-              <div style={{ width: '400px', height: '250px', margin: '20px auto', backgroundColor: '#1f2937', borderRadius: 10, padding: '10px', boxShadow: '0 4px 10px rgba(0,0,0,0.5)', color: '#fff' }}>
-                <h4 style={{ textAlign: 'center', marginBottom: '10px' }}>📊 Évolution de {selectedMetric}</h4>
 
-                <Line
-                  data={{
-                    labels: history.map((point) => point.timestamp),
-                    datasets: [
-                      {
-                        label: selectedMetric,
-                        data: history.map((point) => point[selectedMetric]),
-                        borderColor: '#3b82f6',
-                        backgroundColor: 'rgba(59, 130, 246, 0.2)',
-                        borderWidth: 2,
-                        pointRadius: 4,
-                        pointBackgroundColor: '#fff',
-                      },
-                    ],
-                  }}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: { duration: 500 }, // Animation fluide
-                    plugins: {
-                      legend: { display: false },
-                      tooltip: { backgroundColor: '#333', titleColor: '#fff' },
-                    },
-                    scales: {
-                      x: { ticks: { color: "#fff" } },
-                      y: { ticks: { color: "#fff" }, suggestedMin: 0 },
-                    },
-                  }}
-                />
-
-                <button onClick={() => setSelectedMetric(null)} style={{ width: '100%', padding: '8px', borderRadius: '8px', backgroundColor: '#ef4444', color: '#fff', border: 'none', marginTop: '10px' }}>
-                  ❌ Fermer
-                </button>
+            {selectedMetric && (
+              <div className="modal" onClick={() => setSelectedMetric(null)}>
+                <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                  <h4>{selectedMetric}</h4>
+                  {renderChart(history.filter((d) => d.name === selectedMetric), `live-${selectedMetric}`)}
+                  <button onClick={() => setSelectedMetric(null)}>Fermer</button>
+                </div>
               </div>
             )}
 
+            <h4>📦 Enregistrements complets</h4>
+            {filteredHistories.map((entry, idx) => (
+              <div key={idx} onClick={() => setViewingGlobalHistory(entry)} className="history-card">
+                <strong>{entry.name}</strong> — {entry.user} ({entry.date})<br />
+                <em>{entry.description || "Aucune description"}</em>
+              </div>
+            ))}
 
-
-
-            <button style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', backgroundColor: '#ef4444', color: '#fff', border: 'none' }} onClick={handleLogout}>
-              Déconnexion
-            </button>
-          </div>
+            {viewingGlobalHistory && (
+              <div className="modal" onClick={() => setViewingGlobalHistory(null)}>
+                <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                  <h4>{viewingGlobalHistory.name}</h4>
+                  {renderChart(viewingGlobalHistory.data, `history-${viewingGlobalHistory.date}`)}
+                  <button onClick={() => deleteRecording(viewingGlobalHistory)}>🗑️ Supprimer</button>
+                  <button onClick={() => setViewingGlobalHistory(null)}>Fermer</button>
+                </div>
+              </div>
+            )}
+          </>
         )}
-      </div>
+      </main>
     </div>
   );
 };

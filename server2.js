@@ -7,6 +7,14 @@ const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const { body, validationResult } = require('express-validator');
 
+require('dotenv').config();
+
+const SECRET_KEY = process.env.JWT_SECRET;
+const secret = process.env.JWT_SECRET;
+
+console.log("JWT_SECRET =", process.env.JWT_SECRET);
+
+
 const Modbus = require('jsmodbus');
 const net = require('net');
 
@@ -22,11 +30,10 @@ const client = new Modbus.client.TCP(socket, MODBUS_ID);
 
 const app = express();
 const PORT = 3000;
-const SECRET_KEY = 'votre-cle-secrete';
 
 // Activer CORS avec la configuration correcte
 app.use(cors({
-    origin: 'http://192.168.65.227:3001',  // Autoriser l'origine du front-end
+    origin: 'http://192.168.65.227:3002',  // Autoriser l'origine du front-end
     credentials: true,  // Permettre l'envoi de cookies et de headers d'authentification
 }));
 
@@ -54,6 +61,10 @@ const db = mysql.createConnection({
     database: 'vmc1',
 });
 
+const util = require('util');
+const query = util.promisify(db.query).bind(db);
+
+
 // Connexion à la base
 db.connect(err => {
     if (err) {
@@ -62,7 +73,6 @@ db.connect(err => {
     }
     console.log('Connecté à la base de données MySQL.');
 });
-
 
 // Route pour enregistrer un utilisateur et token
 app.post('/api/register', [
@@ -99,6 +109,16 @@ app.post('/api/register', [
         const hashedPassword = await bcrypt.hash(password, 10);
         console.log('Mot de passe hashé avec succès');
 
+
+        const jwt = require('jsonwebtoken');
+
+        const secret = process.env.JWT_SECRET;
+        
+        if (!secret) {
+          throw new Error("La clé secrète JWT n'est pas définie dans les variables d'environnement !");
+        }
+        
+
         // Générer un token
         const token = jwt.sign({ login, role: role || 'user' }, SECRET_KEY, { expiresIn: '1h' });
 
@@ -117,7 +137,7 @@ app.post('/api/register', [
     });
 });
 
-// Route de connexion avec logs améliorés
+// Route de connexion
 app.post('/api/login', [
     body('login')
         .isString()
@@ -335,13 +355,13 @@ app.post('/enregistrer', (req, res) => {
     
     // Vérifier que chaque capteur a bien les bonnes valeurs
     const values = capteursData.map(capteur => [
-        capteur.id_session || null, // Assurez-vous que ce champ est nullable en BDD
-        capteur.capteur_id, // Correction : capteur_id au lieu de id_capteur
-        capteur.name, // Correction : name au lieu de type_mesure
-        capteur.value, // Correction : value au lieu de valeur
-        capteur.unit, // Correction : unit au lieu de unite
+        capteur.id_session || null,
+        capteur.capteur_id, // capteur_id au lieu de id_capteur
+        capteur.name, //  name au lieu de type_mesure
+        capteur.value, //  value au lieu de valeur
+        capteur.unit, // unit au lieu de unite
         new Date().toISOString(), // Timestamp actuel
-        0 // est_archive mis à 0 par défaut
+        0
     ]);
 
     console.log('Requête SQL préparée:', sql);
@@ -433,19 +453,30 @@ app.delete('/api/capteurs', verifyToken, (req, res) => {
 });
 
 app.post('/api/session', verifyToken, (req, res) => {
-    const { nom, description, date_debut, date_fin, intervalle, id_utilisateur } = req.body;
-  
-    // Vérifie uniquement les champs obligatoires
-    if (!nom || !date_debut || !intervalle || !id_utilisateur) {
-      return res.status(400).json({
-        message: "Champs requis manquants : nom, date_debut, intervalle, id_utilisateur."
-      });
-    }
-  
+  const { nom, description, date_debut, date_fin, intervalle } = req.body;
+
+  // Vérifie les champs obligatoires
+  if (!nom || !date_debut || !intervalle) {
+    return res.status(400).json({
+      message: "Champs requis manquants : nom, date_debut, intervalle."
+    });
+  }
+
+  // Récupère l'ID utilisateur à partir du token JWT
+  const token = req.headers.authorization?.split(' ')[1];  // Récupère le token depuis l'en-tête Authorization
+  if (!token) {
+    return res.status(403).json({ message: "Token manquant ou invalide." });
+  }
+
+  try {
+    // Décodage du token pour obtenir l'ID utilisateur
+    const decoded = jwt.verify(token, SECRET_KEY);  // Remplace 'ton_secret_key' par ta clé secrète
+    const id_utilisateur = decoded.id_utilisateur;  // Assure-toi que l'ID utilisateur est bien dans le payload du token
+
     const sql = `
       INSERT INTO SessionMesure (nom, description, date_debut, date_fin, intervalle, id_utilisateur)
       VALUES (?, ?, ?, ?, ?, ?)`;
-  
+
     db.query(sql, [
       nom,
       description || "",
@@ -462,60 +493,82 @@ app.post('/api/session', verifyToken, (req, res) => {
         id_session: result.insertId
       });
     });
-  });
+  } catch (err) {
+    console.error('Erreur lors de la vérification du token JWT:', err);
+    return res.status(401).json({ message: "Token invalide ou expiré." });
+  }
+});
   
-  app.put('/api/session/fin/:id', verifyToken, (req, res) => {
-    const id_session = req.params.id;
-    const { date_fin } = req.body;
-  
-    if (!date_fin) {
-      return res.status(400).json({ message: "Champ 'date_fin' requis." });
+app.put('/api/session/fin/:id', verifyToken, (req, res) => {
+  const id_session = req.params.id;
+  const { date_fin } = req.body;
+
+  if (!date_fin) {
+    return res.status(400).json({ message: "Champ 'date_fin' requis." });
+  }
+
+  const sql = `UPDATE SessionMesure SET date_fin = ? WHERE id_session = ?`;
+
+  db.query(sql, [date_fin, id_session], (err, result) => {
+    if (err) {
+        return res.status(500).json({ message: "Erreur lors de la mise à jour de la session.", error: err });
     }
-  
-    const sql = `UPDATE SessionMesure SET date_fin = ? WHERE id_session = ?`;
-  
-    db.query(sql, [date_fin, id_session], (err, result) => {
-      if (err) return res.status(500).json({ message: "Erreur lors de la mise à jour de la session.", error: err });
-  
-      if (result.affectedRows === 0) {
+    if (result.affectedRows === 0) {
         return res.status(404).json({ message: "Session non trouvée." });
+    }
+    res.status(200).json({ message: "Session mise à jour avec succès." });
+  });
+});
+
+  
+  app.get("/api/users/:login", async (req, res) => {
+    const login = req.params.login;
+  
+    try {
+      // Exécution de la requête SQL
+      const rows = await query(
+        "SELECT id_utilisateur FROM Utilisateur WHERE nom = ?",
+        [login]
+      );
+  
+      console.log("Résultat brut de la requête SQL :", rows);
+  
+      if (!Array.isArray(rows) || rows.length === 0) {
+        console.warn(`Aucun utilisateur trouvé pour le login : ${login}`);
+        return res.status(404).json({ message: "Utilisateur non trouvé" });
       }
   
-      res.status(200).json({ message: "Date de fin enregistrée avec succès." });
-    });
+      const { id_utilisateur } = rows[0];
+  
+      if (!id_utilisateur) {
+        console.error(`id_utilisateur manquant dans la réponse SQL pour ${login}`);
+        return res.status(500).json({ message: "Erreur serveur : ID utilisateur manquant" });
+      }
+  
+      res.json({ id_utilisateur });
+  
+    } catch (error) {
+      console.error("Erreur lors de la récupération de l’utilisateur :", error);
+      res.status(500).json({ message: "Erreur serveur", error: error.message });
+    }
   });
   
-  app.get('/api/sessions', verifyToken, (req, res) => {
-    const sql = `
-      SELECT 
-        s.id_session,
-        s.nom,
-        s.description,
-        s.date_debut,
-        s.date_fin,
-        s.intervalle,
-        u.id_utilisateur,
-        u.nom AS nom_utilisateur
-      FROM SessionMesure s
-      JOIN Utilisateur u ON s.id_utilisateur = u.id_utilisateur
-    `;
+
+  app.get('/test-token', (req, res) => {
+    const testPayload = { user: 'test' };
+    const testToken = jwt.sign(testPayload, SECRET_KEY, { expiresIn: '1h' });
+    console.log('Token généré:', testToken);
   
-    db.query(sql, (err, results) => {
-      if (err) {
-        return res.status(500).json({
-          message: "Erreur lors de la récupération des sessions",
-          error: err
-        });
-      }
-  
-      if (results.length === 0) {
-        return res.status(404).json({ message: "Aucune session trouvée." });
-      }
-  
-      res.status(200).json(results);
-    });
+    try {
+      const decoded = jwt.verify(testToken, SECRET_KEY);
+      res.json({ message: 'Token valide', decoded });
+    } catch (err) {
+      console.error('Erreur de vérification du token:', err);
+      res.status(400).json({ error: 'Token invalide' });
+    }
   });
   
+
 // Lancer le serveur
 app.listen(PORT, () => {
     console.log(`Serveur backend en écoute sur http://192.168.65.227:${PORT}`);
