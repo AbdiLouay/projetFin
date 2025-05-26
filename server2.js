@@ -33,7 +33,7 @@ const PORT = 3000;
 
 // Activer CORS avec la configuration correcte
 app.use(cors({
-    origin: 'http://192.168.65.227:3002',  // Autoriser l'origine du front-end
+    origin: 'http://192.168.65.227:3001',  // Autoriser l'origine du front-end
     credentials: true,  // Permettre l'envoi de cookies et de headers d'authentification
 }));
 
