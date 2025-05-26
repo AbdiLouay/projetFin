@@ -37,7 +37,10 @@ const App = () => {
 
   const [isRecording, setIsRecording] = useState(false);
   const [recordedHistory, setRecordedHistory] = useState([]);
-  const [savedSessions, setSavedSessions] = useState([]); // ← NOUVEL ETAT
+  const [savedSessions, setSavedSessions] = useState([]);
+
+  // **Nouvel état pour la session sélectionnée**
+  const [selectedSession, setSelectedSession] = useState(null);
 
   const API_URL = "http://192.168.65.227:3000/api";
 
@@ -163,6 +166,7 @@ const App = () => {
     setIsRecording(false);
     setRecordedHistory([]);
     setSavedSessions([]);
+    setSelectedSession(null);
   };
 
   const handleSaveRecording = () => {
@@ -304,7 +308,8 @@ const App = () => {
               </p>
             )}
 
-            {sensorData ? (
+            {/* Affichage des capteurs temps réel, si aucune session sélectionnée */}
+            {!selectedSession && sensorData && (
               <div className="sensor-grid">
                 {sensorData.map((capteur) => (
                   <div
@@ -325,10 +330,9 @@ const App = () => {
                   </div>
                 ))}
               </div>
-            ) : (
-              <p>Chargement des données...</p>
             )}
 
+            {/* Graphique historique du capteur sélectionné */}
             {selectedMetric && (
               <div className="chart-container">
                 <h4 style={{ textAlign: "center", marginBottom: 10 }}>
@@ -370,25 +374,78 @@ const App = () => {
               </div>
             )}
 
-            {/* 📦 Liste des sessions enregistrées */}
-            {savedSessions.length > 0 && (
+            {/* 📦 Liste des sessions enregistrées (cliquables) */}
+            {!selectedSession && savedSessions.length > 0 && (
               <div className="session-list">
                 <h4 style={{ marginTop: "2rem" }}>📦 Sessions enregistrées</h4>
                 {savedSessions.map((session, index) => (
-                  <div key={index} className="session-item">
+                  <div
+                    key={index}
+                    className="session-item"
+                    onClick={() => setSelectedSession(session)}
+                    style={{ cursor: "pointer" }}
+                    title="Cliquez pour voir les données enregistrées"
+                  >
                     <h5>📝 {session.nom}</h5>
                     <p><strong>Description :</strong> {session.description}</p>
                     <p><strong>Utilisateur :</strong> {session.utilisateur}</p>
                     <p><strong>Date :</strong> {session.date}</p>
-                    <ul>
-                      {session.donnees.map((d, i) => (
-                        <li key={i}>
-                          {d.name} : {d.value} {d.unit} à {new Date(d.timestamp).toLocaleTimeString()}
-                        </li>
-                      ))}
-                    </ul>
+                    {/* Pour alléger la liste, on enlève les valeurs détaillées ici */}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Affichage des graphiques pour la session sélectionnée */}
+            {selectedSession && (
+              <div className="chart-container">
+                <h4 style={{ textAlign: "center", marginBottom: 10 }}>
+                  📊 Données enregistrées : <strong>{selectedSession.nom}</strong>
+                </h4>
+
+                {[...new Set(selectedSession.donnees.map((d) => d.name))].map(
+                  (capteurName) => {
+                    const donneesFiltrees = selectedSession.donnees.filter(
+                      (d) => d.name === capteurName
+                    );
+                    return (
+                      <div key={capteurName} style={{ marginBottom: "2rem" }}>
+                        <h5>{capteurName}</h5>
+                        <Line
+                          data={{
+                            labels: donneesFiltrees.map((d) =>
+                              new Date(d.timestamp).toLocaleTimeString()
+                            ),
+                            datasets: [
+                              {
+                                label: capteurName,
+                                data: donneesFiltrees.map((d) => d.value),
+                                borderColor: "rgb(153, 102, 255)",
+                                backgroundColor: "rgba(153, 102, 255, 0.2)",
+                                fill: true,
+                              },
+                            ],
+                          }}
+                          options={{
+                            responsive: true,
+                            plugins: {
+                              legend: { position: "top" },
+                            },
+                            scales: { y: { beginAtZero: true } },
+                          }}
+                        />
+                      </div>
+                    );
+                  }
+                )}
+
+                <button
+                  className="button button-secondary"
+                  onClick={() => setSelectedSession(null)}
+                  style={{ marginTop: "1rem" }}
+                >
+                  🔙 Retour aux sessions
+                </button>
               </div>
             )}
           </>
