@@ -18,7 +18,7 @@ console.log("JWT_SECRET =", process.env.JWT_SECRET);
 const Modbus = require('jsmodbus');
 const net = require('net');
 
-const MODBUS_SERVER_IP = '192.168.64.149'; // Remplace par l'IP correcte
+const MODBUS_SERVER_IP = '192.168.64.253'; // Remplace par l'IP correcte
 const MODBUS_PORT = 502;  // Port Modbus standard
 const MODBUS_ID = 1;  // ID de l'esclave Modbus (souvent 1 par défaut)
 
@@ -288,44 +288,70 @@ const config = [
 
 // Route pour récupérer les vraies données des 15 capteurs
 app.get('/api/capteurs', verifyToken, async (req, res) => {
-    console.log('--- Requête reçue sur /api/capteurs ---');
+  console.log('--- Requête reçue sur /api/capteurs ---');
 
-    if (!socket.writable) {
-        console.error(' Erreur : Connexion Modbus non établie.');
-        return res.status(500).json({ message: 'Erreur : connexion Modbus non établie.' });
-    }
+  if (!socket.writable) {
+      console.error('Erreur : Connexion Modbus non établie.');
+      return res.status(500).json({ message: 'Erreur : connexion Modbus non établie.' });
+  }
 
-    try {
-        // Lire les registres Modbus
-        const totalRegistres = config.length;
-        console.log('Envoi de la requête Modbus pour lire les registres');
+  try {
+      const totalRegistres = config.length;
+      console.log('Envoi de la requête Modbus pour lire les registres');
 
-        const response = await client.readHoldingRegisters(0, totalRegistres);
-        const values = response.response._body.values;
+      const response = await client.readHoldingRegisters(0, totalRegistres);
+      const values = response.response._body.values;
 
-        console.log(`Données Modbus brutes reçues : ${JSON.stringify(values)}`);
+      console.log(`Données Modbus brutes reçues : ${JSON.stringify(values)}`);
 
-        const capteursData = config.map((capteurConfig, index) => {
-            const value = values[index];
-            const valueInRange = Math.max(capteurConfig.min, Math.min(capteurConfig.max, value));
+      const capteursData = config.map((capteurConfig, index) => {
+          const value = values[index];
+          const valueInRange = Math.max(capteurConfig.min, Math.min(capteurConfig.max, value));
 
-            return {
-                capteur_id: capteurConfig.address + 1,
-                name: capteurConfig.name,
-                unit: capteurConfig.unit,
-                value: valueInRange,
-                timestamp: new Date().toISOString()
-            };
-        });
+          return {
+              capteur_id: capteurConfig.address + 1,
+              name: capteurConfig.name,
+              unit: capteurConfig.unit,
+              value: valueInRange,
+              timestamp: new Date().toISOString()
+          };
+      });
 
-        console.log('🔹 Données des capteurs traitées envoyées au client:', JSON.stringify(capteursData));
+      // Fonction pour formater la date ISO en format MySQL DATETIME (sans T ni Z)
+      function formatDateForMySQL(dateString) {
+        const date = new Date(dateString);
+        return date.toISOString().slice(0, 19).replace('T', ' ');
+      }
 
-        return res.json(capteursData);
-    } catch (error) {
-        console.error('Erreur lors de la lecture Modbus :', error);
-        return res.status(500).json({ message: 'Erreur lors de la récupération des données des capteurs' });
-    }
+      // Enregistrement automatique dans la BDD avec formatage des dates
+      const sql = `INSERT INTO capteur (id_capteur, ctype, valeur, unite, date_heure) VALUES ?`;
+      const valuesToInsert = capteursData.map(capteur => [
+          capteur.capteur_id,
+          capteur.name,
+          capteur.value,
+          capteur.unit,
+          formatDateForMySQL(capteur.timestamp),  // <-- formatage appliqué ici
+      ]);
+
+      db.query(sql, [valuesToInsert], (err, result) => {
+          if (err) {
+              console.error('Erreur lors de l’enregistrement automatique des capteurs :', err);
+          } else {
+              console.log(`${result.affectedRows} capteur(s) enregistré(s) automatiquement`);
+          }
+      });
+
+      console.log('🔹 Données des capteurs traitées envoyées au client:', JSON.stringify(capteursData));
+
+      return res.json(capteursData);
+
+  } catch (error) {
+      console.error('Erreur lors de la lecture Modbus :', error);
+      return res.status(500).json({ message: 'Erreur lors de la récupération des données des capteurs' });
+  }
 });
+
+
 
 
 // Gérer la fermeture de connexion proprement
@@ -351,17 +377,15 @@ app.post('/enregistrer', (req, res) => {
     }
 
     // Préparation de la requête SQL
-    const sql = `INSERT INTO Mesure (id_session, id_capteur, type_mesure, valeur, unite, date_heure, est_archive) VALUES ?`;
+    const sql = `INSERT INTO capteur(id_capteur, ctype, valeur, unite, date_heure) VALUES ?`;
     
     // Vérifier que chaque capteur a bien les bonnes valeurs
     const values = capteursData.map(capteur => [
-        capteur.id_session || null,
         capteur.capteur_id, // capteur_id au lieu de id_capteur
         capteur.name, //  name au lieu de type_mesure
         capteur.value, //  value au lieu de valeur
         capteur.unit, // unit au lieu de unite
         new Date().toISOString(), // Timestamp actuel
-        0
     ]);
 
     console.log('Requête SQL préparée:', sql);
@@ -553,6 +577,32 @@ app.put('/api/session/fin/:id', verifyToken, (req, res) => {
     }
   });
   
+
+  app.post('/api/session/:id/mesures', verifyToken, (req, res) => {
+  const id_session = req.params.id;
+  const mesures = req.body.mesures; // [{capteur_id, timestamp, value, unit}, ...]
+
+  if (!Array.isArray(mesures) || mesures.length === 0) {
+    return res.status(400).json({ message: "Mesures manquantes ou invalides." });
+  }
+
+  const values = mesures.map(m => [id_session, m.capteur_id, m.timestamp, m.value, m.unit]);
+
+  const sql = `
+    INSERT INTO MesureSession (id_session, capteur_id, timestamp, value, unit)
+    VALUES ?`;
+
+  db.query(sql, [values], (err) => {
+    if (err) {
+      return res.status(500).json({ message: "Erreur d'insertion des mesures", error: err });
+    }
+    res.status(201).json({ message: "Mesures enregistrées." });
+  });
+});
+
+
+
+
 
   app.get('/test-token', (req, res) => {
     const testPayload = { user: 'test' };
