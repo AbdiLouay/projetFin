@@ -18,9 +18,9 @@ console.log("JWT_SECRET =", process.env.JWT_SECRET);
 const Modbus = require('jsmodbus');
 const net = require('net');
 
-const MODBUS_SERVER_IP = '192.168.64.253'; // Remplace par l'IP correcte
+const MODBUS_SERVER_IP = '192.168.64.253'; //l'IP
 const MODBUS_PORT = 502;  // Port Modbus standard
-const MODBUS_ID = 1;  // ID de l'esclave Modbus (souvent 1 par défaut)
+const MODBUS_ID = 1;  // ID de l'esclave Modbus
 
 // Créer un socket pour la connexion Modbus
 const socket = new net.Socket();
@@ -74,11 +74,24 @@ db.connect(err => {
     console.log('Connecté à la base de données MySQL.');
 });
 
+const rateLimit = require('express-rate-limit');
+
+// Middleware de rate limiting pour la route /api/register
+const registerLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 4, // Limite chaque IP à 5 requêtes par fenêtre
+    message: {
+        message: "Trop de tentatives d'inscription depuis cette IP. Réessayez plus tard."
+    },
+    standardHeaders: true, // Retourne les headers RateLimit
+    legacyHeaders: false,  // Désactive les anciens headers
+});
+
 // Route pour enregistrer un utilisateur et token
-app.post('/api/register', [
+app.post('/api/register', registerLimiter, [
     body('login')
         .isString()
-        .isLength({ min: 3 }).withMessage('Le login doit contenir au moins 3 caractères.')
+        .isLength({ min: 5 }).withMessage('Le login doit contenir au moins 5 caractères.')
         .trim()
         .escape(),
     body('password')
@@ -88,7 +101,7 @@ app.post('/api/register', [
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-        return res.status(400).json({ message: 'Données invalides', errors: errors.array() });
+        return res.status(400).json({ message: 'Le mot de passe doit contenir au moins 6 caractères.', errors: errors.array() });
     }
 
     const { login, password, role } = req.body;
@@ -269,85 +282,116 @@ const verifyToken = (req, res, next) => {
 
 const config = [
     { "name": "de COV","unit": "%", "min": 0, "max": 100, "address": 0 },
-    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 100, "address": 1 },
-    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 100, "address": 2 },
-    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 100, "address": 3 },
-    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 100, "address": 4 },
-    { "name": "de température","unit": "°C", "min": -150, "max": 150, "address": 5 },
+    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 30, "address": 1 },
+    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 30, "address": 2 },
+    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 30, "address": 3 },
+    { "name": "débimètre","unit": "m3/h", "min": 0, "max": 30, "address": 4 },
+    { "name": "de température","unit": "°C", "min": -35, "max": 35, "address": 5 },
     { "name": "d'humidité","unit": "%", "min": 0, "max": 100, "address": 6 },
-    { "name": "de température","unit": "°C", "min": -150, "max": 150, "address": 7 },
+    { "name": "de température","unit": "°C", "min": -35, "max": 35, "address": 7 },
     { "name": "d'humidité","unit": "%", "min": 0, "max": 100, "address": 8 },
-    { "name": "de température","unit": "°C", "min": -150, "max": 150, "address": 9},
+    { "name": "de température","unit": "°C", "min": -35, "max": 35, "address": 9},
     { "name": "d'humidité","unit": "%", "min": 0, "max": 100, "address": 10 },
-    { "name": "de température","unit": "°C", "min": -150, "max": 150, "address": 11 },
+    { "name": "de température","unit": "°C", "min": -35, "max": 35, "address": 11 },
     { "name": "d'humidité","unit": "%", "min": 0, "max": 100, "address": 12 },
-    { "name": "d'ambiance","unit": "°C", "min": -150, "max": 150, "address": 13 },
-    { "name": "de CO2","unit": "ppm", "min": 0, "max": 3000, "address": 14 }
+    { "name": "d'ambiance","unit": "°C", "min": -35, "max": 35, "address": 13 },
+    { "name": "de CO2","unit": "ppm", "min": 0, "max": 5000, "address": 14 }
 ];
 
 
-// Route pour récupérer les vraies données des 15 capteurs
+// Route pour récupérer les données des capteurs
 app.get('/api/capteurs', verifyToken, async (req, res) => {
   console.log('--- Requête reçue sur /api/capteurs ---');
 
   if (!socket.writable) {
-      console.error('Erreur : Connexion Modbus non établie.');
-      return res.status(500).json({ message: 'Erreur : connexion Modbus non établie.' });
+    console.error('Erreur : Connexion Modbus non établie.');
+    return res.status(500).json({ message: 'Erreur : connexion Modbus non établie.' });
   }
 
   try {
-      const totalRegistres = config.length;
-      console.log('Envoi de la requête Modbus pour lire les registres');
+    const totalRegistres = config.length;
+    console.log('Envoi de la requête Modbus pour lire les registres');
 
-      const response = await client.readHoldingRegisters(0, totalRegistres);
-      const values = response.response._body.values;
+    const response = await client.readInputRegisters(0, totalRegistres);
+    const values = response.response._body.values;
 
-      console.log(`Données Modbus brutes reçues : ${JSON.stringify(values)}`);
+    console.log(`Données Modbus brutes reçues : ${JSON.stringify(values)}`);
 
-      const capteursData = config.map((capteurConfig, index) => {
-          const value = values[index];
-          const valueInRange = Math.max(capteurConfig.min, Math.min(capteurConfig.max, value));
+    const ADC_MAX = 16709;
 
-          return {
-              capteur_id: capteurConfig.address + 1,
-              name: capteurConfig.name,
-              unit: capteurConfig.unit,
-              value: valueInRange,
-              timestamp: new Date().toISOString()
-          };
-      });
+    function toSigned16(value) {
+      return value > 0x7FFF ? value - 0x10000 : value;
+    }
 
-      // Fonction pour formater la date ISO en format MySQL DATETIME (sans T ni Z)
-      function formatDateForMySQL(dateString) {
-        const date = new Date(dateString);
-        return date.toISOString().slice(0, 19).replace('T', ' ');
+    function roundTo4(value) {
+      return parseFloat(value.toFixed(4));
+    }
+
+    function convertValue(raw, capteurConfig) {
+      const signedValue = toSigned16(raw);
+
+      switch (capteurConfig.name) {
+        case 'de température':
+        case "d'ambiance":
+          return roundTo4(signedValue / 10); // °C directement
+
+        case 'débimètre':
+        case "d'humidité":
+        case 'de COV':
+        case 'de CO2': {
+          const percent = (signedValue / ADC_MAX) * 100;
+          return roundTo4(Math.min(Math.max(percent, capteurConfig.min), capteurConfig.max));
+        }
+
+        default: {
+          const percent = (signedValue / ADC_MAX) * 100;
+          return roundTo4(Math.min(Math.max(percent, capteurConfig.min), capteurConfig.max));
+        }
       }
+    }
 
-      // Enregistrement automatique dans la BDD avec formatage des dates
-      const sql = `INSERT INTO capteur (id_capteur, ctype, valeur, unite, date_heure) VALUES ?`;
-      const valuesToInsert = capteursData.map(capteur => [
-          capteur.capteur_id,
-          capteur.name,
-          capteur.value,
-          capteur.unit,
-          formatDateForMySQL(capteur.timestamp),  // <-- formatage appliqué ici
-      ]);
+    const capteursData = config.map((capteurConfig, index) => {
+      const rawValue = values[index];
+      const value = convertValue(rawValue, capteurConfig);
 
-      db.query(sql, [valuesToInsert], (err, result) => {
-          if (err) {
-              console.error('Erreur lors de l’enregistrement automatique des capteurs :', err);
-          } else {
-              console.log(`${result.affectedRows} capteur(s) enregistré(s) automatiquement`);
-          }
-      });
+      return {
+        capteur_id: capteurConfig.address + 1,
+        name: capteurConfig.name,
+        unit: capteurConfig.unit,
+        rawValue: toSigned16(rawValue),
+        value,
+        timestamp: new Date().toISOString()
+      };
+    });
 
-      console.log('🔹 Données des capteurs traitées envoyées au client:', JSON.stringify(capteursData));
+    function formatDateForMySQL(dateString) {
+      const date = new Date(dateString);
+      return date.toISOString().slice(0, 19).replace('T', ' ');
+    }
 
-      return res.json(capteursData);
+    const sql = `INSERT INTO capteur (id_capteur, ctype, valeur, unite, date_heure) VALUES ?`;
+    const valuesToInsert = capteursData.map(capteur => [
+      capteur.capteur_id,
+      capteur.name,
+      capteur.value,
+      capteur.unit,
+      formatDateForMySQL(capteur.timestamp),
+    ]);
+
+    db.query(sql, [valuesToInsert], (err, result) => {
+      if (err) {
+        console.error('Erreur lors de l’enregistrement automatique des capteurs :', err);
+      } else {
+        console.log(`${result.affectedRows} capteur(s) enregistré(s) automatiquement`);
+      }
+    });
+
+    console.log('🔹 Données des capteurs traitées envoyées au client:', JSON.stringify(capteursData));
+    return res.json(capteursData);
 
   } catch (error) {
-      console.error('Erreur lors de la lecture Modbus :', error);
-      return res.status(500).json({ message: 'Erreur lors de la récupération des données des capteurs' });
+    console.error('Erreur lors de la lecture Modbus :', error);
+    return res.status(500).json({ message: 'Erreur lors de la récupération des données des capteurs' });
   }
 });
 
@@ -363,44 +407,42 @@ socket.on('close', () => {
     console.log('Connexion Modbus fermée');
 });
 
-
 // Route pour enregistrer les données des capteurs
 app.post('/enregistrer', (req, res) => {
-    console.log('Requête reçue sur /enregistrer');
+  console.log('Requête reçue sur /enregistrer');
 
-    const capteursData = req.body; // Données envoyées en JSON
-    console.log('Données reçues:', JSON.stringify(capteursData, null, 2));
+  const capteursData = req.body; // Données envoyées en JSON
+  console.log('Données reçues:', JSON.stringify(capteursData, null, 2));
 
-    if (!Array.isArray(capteursData) || capteursData.length === 0) {
-        console.error(' Aucune donnée reçue ou format incorrect');
-        return res.status(400).json({ error: 'Aucune donnée reçue ou format incorrect' });
-    }
+  if (!Array.isArray(capteursData) || capteursData.length === 0) {
+      console.error(' Aucune donnée reçue ou format incorrect');
+      return res.status(400).json({ error: 'Aucune donnée reçue ou format incorrect' });
+  }
 
-    // Préparation de la requête SQL
-    const sql = `INSERT INTO capteur(id_capteur, ctype, valeur, unite, date_heure) VALUES ?`;
-    
-    // Vérifier que chaque capteur a bien les bonnes valeurs
-    const values = capteursData.map(capteur => [
-        capteur.capteur_id, // capteur_id au lieu de id_capteur
-        capteur.name, //  name au lieu de type_mesure
-        capteur.value, //  value au lieu de valeur
-        capteur.unit, // unit au lieu de unite
-        new Date().toISOString(), // Timestamp actuel
-    ]);
+  // Préparation de la requête SQL
+  const sql = `INSERT INTO capteur(id_capteur, ctype, valeur, unite, date_heure) VALUES ?`;
+  
+  // Vérifier que chaque capteur a bien les bonnes valeurs
+  const values = capteursData.map(capteur => [
+      capteur.capteur_id, // capteur_id au lieu de id_capteur
+      capteur.name, //  name au lieu de type_mesure
+      capteur.value, //  value au lieu de valeur
+      capteur.unit, // unit au lieu de unite
+      new Date().toISOString(), // Timestamp actuel
+  ]);
 
-    console.log('Requête SQL préparée:', sql);
-    console.log('Valeurs à insérer:', values);
+  console.log('Requête SQL préparée:', sql);
+  console.log('Valeurs à insérer:', values);
 
-    db.query(sql, [values], (err, result) => {
-        if (err) {
-            console.error('Erreur lors de l\'insertion des données :', err);
-            return res.status(500).json({ error: 'Erreur lors de l\'enregistrement en BDD' });
-        }
-        console.log(`${result.affectedRows} enregistrement(s) ajouté(s)`);
-        res.status(200).json({ message: `${result.affectedRows} enregistrement(s) ajouté(s)` });
-    });
+  db.query(sql, [values], (err, result) => {
+      if (err) {
+          console.error('Erreur lors de l\'insertion des données :', err);
+          return res.status(500).json({ error: 'Erreur lors de l\'enregistrement en BDD' });
+      }
+      console.log(`${result.affectedRows} enregistrement(s) ajouté(s)`);
+      res.status(200).json({ message: `${result.affectedRows} enregistrement(s) ajouté(s)` });
+  });
 });
-
 
 // ROUTE POUR RÉCUPÉRER LE TOKEN
 app.get('/api/get-token/:id', (req, res) => {
@@ -486,42 +528,64 @@ app.post('/api/session', verifyToken, (req, res) => {
     });
   }
 
-  // Récupère l'ID utilisateur à partir du token JWT
-  const token = req.headers.authorization?.split(' ')[1];  // Récupère le token depuis l'en-tête Authorization
+  // Récupération et vérification du token JWT depuis l'en-tête Authorization
+  const token = req.headers.authorization?.split(' ')[1];
   if (!token) {
+    console.warn("Aucun token fourni dans l'en-tête Authorization.");
     return res.status(403).json({ message: "Token manquant ou invalide." });
   }
 
   try {
-    // Décodage du token pour obtenir l'ID utilisateur
-    const decoded = jwt.verify(token, SECRET_KEY);  // Remplace 'ton_secret_key' par ta clé secrète
-    const id_utilisateur = decoded.id_utilisateur;  // Assure-toi que l'ID utilisateur est bien dans le payload du token
+    // Vérification du token JWT
+    const decoded = jwt.verify(token, SECRET_KEY);
+    const id_utilisateur = decoded.id_utilisateur;
+
+    // Formatage des dates en 'YYYY-MM-DD HH:mm:ss' pour MySQL
+    const formatted_date_debut = new Date(date_debut).toISOString().slice(0, 19).replace('T', ' ');
+    const formatted_date_fin = date_fin ? new Date(date_fin).toISOString().slice(0, 19).replace('T', ' ') : null;
+
+    // Log des données à insérer
+    console.log("Données reçues pour insertion :", {
+      nom,
+      description,
+      formatted_date_debut,
+      formatted_date_fin,
+      intervalle,
+      id_utilisateur
+    });
 
     const sql = `
       INSERT INTO SessionMesure (nom, description, date_debut, date_fin, intervalle, id_utilisateur)
-      VALUES (?, ?, ?, ?, ?, ?)`;
+      VALUES (?, ?, ?, ?, ?, ?)
+    `;
 
     db.query(sql, [
       nom,
       description || "",
-      date_debut,
-      date_fin || null,
+      formatted_date_debut,
+      formatted_date_fin,
       intervalle,
       id_utilisateur
     ], (err, result) => {
       if (err) {
+        console.error("Erreur SQL lors de l'insertion :", err);
         return res.status(500).json({ message: "Erreur d'enregistrement", error: err });
       }
-      res.status(201).json({
+
+      console.log("Session insérée avec succès. ID :", result.insertId);
+      // Envoi du succès au front
+      return res.status(201).json({
         message: "Session enregistrée avec succès.",
         id_session: result.insertId
       });
     });
+
   } catch (err) {
     console.error('Erreur lors de la vérification du token JWT:', err);
     return res.status(401).json({ message: "Token invalide ou expiré." });
   }
 });
+
   
 app.put('/api/session/fin/:id', verifyToken, (req, res) => {
   const id_session = req.params.id;
@@ -578,46 +642,16 @@ app.put('/api/session/fin/:id', verifyToken, (req, res) => {
   });
   
 
-  app.post('/api/session/:id/mesures', verifyToken, (req, res) => {
-  const id_session = req.params.id;
-  const mesures = req.body.mesures; // [{capteur_id, timestamp, value, unit}, ...]
 
-  if (!Array.isArray(mesures) || mesures.length === 0) {
-    return res.status(400).json({ message: "Mesures manquantes ou invalides." });
-  }
-
-  const values = mesures.map(m => [id_session, m.capteur_id, m.timestamp, m.value, m.unit]);
-
-  const sql = `
-    INSERT INTO MesureSession (id_session, capteur_id, timestamp, value, unit)
-    VALUES ?`;
-
-  db.query(sql, [values], (err) => {
-    if (err) {
-      return res.status(500).json({ message: "Erreur d'insertion des mesures", error: err });
-    }
-    res.status(201).json({ message: "Mesures enregistrées." });
-  });
+  
+// Vérifie si l'utilisateur est toujours authentifié (après rechargement par ex)
+app.get('/api/check-auth', verifyToken, (req, res) => {
+    res.status(200).json({
+        message: 'Utilisateur toujours connecté',
+        user: req.user,
+    });
 });
 
-
-
-
-
-  app.get('/test-token', (req, res) => {
-    const testPayload = { user: 'test' };
-    const testToken = jwt.sign(testPayload, SECRET_KEY, { expiresIn: '1h' });
-    console.log('Token généré:', testToken);
-  
-    try {
-      const decoded = jwt.verify(testToken, SECRET_KEY);
-      res.json({ message: 'Token valide', decoded });
-    } catch (err) {
-      console.error('Erreur de vérification du token:', err);
-      res.status(400).json({ error: 'Token invalide' });
-    }
-  });
-  
 
 // Lancer le serveur
 app.listen(PORT, () => {

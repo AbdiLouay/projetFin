@@ -12,7 +12,6 @@ import {
 } from "chart.js";
 import "./App.css";
 
-// Enregistrement des composants ChartJS nécessaires pour Line chart
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -24,32 +23,31 @@ ChartJS.register(
 );
 
 const App = () => {
-  // États pour gérer l'authentification, la vue, les formulaires et les données
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [view, setView] = useState("login"); // "login" ou "register" ou "home"
+  const [view, setView] = useState("login");
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
-  const [sensorData, setSensorData] = useState(null); // données capteurs actuelles
-  const [history, setHistory] = useState([]); // historique des données pour graphique
-  const [selectedMetric, setSelectedMetric] = useState(null); // métrique choisie pour graphique
-  const [lastUpdate, setLastUpdate] = useState(null); // heure de dernière mise à jour
-  const [theme, setTheme] = useState("dark"); // thème clair/sombre
+  const [sensorData, setSensorData] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [selectedMetric, setSelectedMetric] = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [theme, setTheme] = useState("dark");
 
-  // Nouveaux états pour l'enregistrement
   const [isRecording, setIsRecording] = useState(false);
   const [recordedHistory, setRecordedHistory] = useState([]);
+  const [savedSessions, setSavedSessions] = useState([]);
 
-  // URL API backend
+  // **Nouvel état pour la session sélectionnée**
+  const [selectedSession, setSelectedSession] = useState(null);
+
   const API_URL = "http://192.168.65.227:3000/api";
 
-  // Récupérer le token JWT dans les cookies pour authentification
   const getTokenFromCookies = () => {
     const match = document.cookie.match(/(^| )token=([^;]+)/);
     return match ? match[2] : null;
   };
 
-  // Fonction pour récupérer les données des capteurs depuis l'API
   const fetchSensorData = async () => {
     const token = getTokenFromCookies();
     if (!token) {
@@ -62,7 +60,7 @@ const App = () => {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`, // envoi du token
+          Authorization: `Bearer ${token}`,
         },
       });
 
@@ -75,7 +73,6 @@ const App = () => {
         throw new Error("Les données reçues sont invalides ou vides");
       }
 
-      // Formatage de l'historique pour affichage graphique
       const newHistory = data.map((capteur) => ({
         timestamp: new Date().toLocaleTimeString(),
         capteur_id: capteur.capteur_id,
@@ -84,18 +81,16 @@ const App = () => {
         value: parseFloat(capteur.value) || 0,
       }));
 
-      // Mise à jour des états
       setSensorData(data);
       setLastUpdate(new Date().toLocaleTimeString());
-      // On garde max 20 dernières valeurs dans l'historique
       setHistory((prev) => [...prev, ...newHistory].slice(-20));
-      setMessage(""); // efface message d'erreur si ok
+      setMessage("");
 
-      // Si on enregistre, on ajoute ces nouvelles données dans recordedHistory
       if (isRecording) {
-        // On stocke seulement capteur_id, timestamp ISO, et valeur pour l'enregistrement
         const newRecorded = data.map((capteur) => ({
           capteur_id: capteur.capteur_id,
+          name: capteur.name,
+          unit: capteur.unit,
           timestamp: new Date().toISOString(),
           value: parseFloat(capteur.value) || 0,
         }));
@@ -106,17 +101,52 @@ const App = () => {
     }
   };
 
-  // Effet pour lancer la récupération des données toutes les 30 secondes si connecté
   useEffect(() => {
     let intervalId;
     if (isLoggedIn) {
       fetchSensorData();
-      intervalId = setInterval(fetchSensorData, 30000); // 30s
+      intervalId = setInterval(fetchSensorData, 30000);
     }
-    return () => clearInterval(intervalId); // nettoyage à la fin
-  }, [isLoggedIn, isRecording]); // re-run si isRecording change (juste pour sûreté)
+    return () => clearInterval(intervalId);
+  }, [isLoggedIn, isRecording]);
 
-  // Gestion du formulaire de connexion
+  useEffect(() => {
+  if (theme === "dark") {
+    document.body.classList.add("dark");
+    document.body.classList.remove("light");
+  } else {
+    document.body.classList.add("light");
+    document.body.classList.remove("dark");
+  }
+}, [theme]);
+
+useEffect(() => {
+  const checkAuth = async () => {
+    try {
+      const response = await fetch(`${API_URL}/check-auth`, {
+        method: "GET",
+        credentials: "include", // si tu utilises les cookies httpOnly
+        headers: {
+          Authorization: `Bearer ${getTokenFromCookies()}`, // si tu passes le token manuellement
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log("✅ Utilisateur toujours connecté :", data.user);
+        setIsLoggedIn(true);
+        setView("home");
+      } else {
+        console.warn("❌ Token invalide ou expiré");
+      }
+    } catch (error) {
+      console.error("Erreur lors de la vérification d'auth :", error);
+    }
+  };
+
+  checkAuth();
+}, []);
+
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
@@ -128,10 +158,9 @@ const App = () => {
 
       const data = await response.json();
       if (response.ok) {
-        // Stockage du token dans un cookie (1h)
         document.cookie = `token=${data.data.token}; path=/; max-age=3600`;
         setIsLoggedIn(true);
-        setView("home"); // passe à la page d'accueil
+        setView("home");
         setMessage("");
       } else {
         setMessage(data.message || "❌ Identifiants incorrects !");
@@ -141,7 +170,6 @@ const App = () => {
     }
   };
 
-  // Gestion du formulaire d'inscription
   const handleRegister = async (e) => {
     e.preventDefault();
     try {
@@ -154,7 +182,7 @@ const App = () => {
       const data = await response.json();
       if (response.ok) {
         setMessage("✅ Inscription réussie !");
-        setTimeout(() => setView("login"), 1000); // retour à la connexion
+        setTimeout(() => setView("login"), 1000);
       } else {
         setMessage(data.message || "⚠️ Erreur d'inscription.");
       }
@@ -163,7 +191,6 @@ const App = () => {
     }
   };
 
-  // Déconnexion : suppression cookie + retour à login
   const handleLogout = () => {
     document.cookie = "token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC";
     setIsLoggedIn(false);
@@ -174,95 +201,87 @@ const App = () => {
     setMessage("");
     setIsRecording(false);
     setRecordedHistory([]);
+    setSavedSessions([]);
+    setSelectedSession(null);
   };
 
-  // Fonction pour sauvegarder l'enregistrement (création session + envoi des données)
-  const handleSaveRecording = async () => {
-    if (recordedHistory.length === 0) {
-      alert("⚠️ Aucune donnée enregistrée à sauvegarder.");
-      return;
+const handleSaveRecording = async () => {
+  if (recordedHistory.length === 0) {
+    alert("⚠️ Aucune donnée enregistrée à sauvegarder.");
+    return;
+  }
+
+  const nom = prompt("Nom de l'enregistrement :");
+  const description = prompt("Description :");
+  if (!nom || !description) {
+    alert("❌ Nom et description requis.");
+    return;
+  }
+
+  const dateDebut = recordedHistory[0]?.timestamp;
+  const dateFin = recordedHistory[recordedHistory.length - 1]?.timestamp;
+  const intervalle = 30; // ou selon ton réglage réel
+
+  const token = getTokenFromCookies();
+
+  try {
+    // 1. Création de la session
+    const response = await fetch(`${API_URL}/session`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        nom,
+        description,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        intervalle,
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      console.error("Réponse erreur session:", data);
+      throw new Error(data.message || "Erreur lors de la sauvegarde de la session.");
     }
 
-    const name = prompt("Nom de l'enregistrement :");
-    const description = prompt("Description :");
+    const id_session = data.id_session;
 
-    if (!name || !description) {
-      alert("❌ Nom et description requis.");
-      return;
-    }
-
-    const date = new Date();
-    const sessionToSend = {
-      nom: name,
+    // ✅ 2. Envoi des mesures dans la BDD
+    console.log("Données envoyées à /session :", {
+      nom,
       description,
-      date_debut: date.toISOString().slice(0, 19).replace("T", " "),
-      intervalle: 30,
+      date_debut: dateDebut,
+      date_fin: dateFin,
+      intervalle,
+    });
+
+
+
+    // ✅ 3. Mise à jour locale
+    const newSession = {
+      id_session,
+      nom,
+      description,
+      date: new Date(dateDebut).toLocaleString(),
+      utilisateur: login,
+      donnees: recordedHistory,
     };
 
-    const token = getTokenFromCookies();
-    if (!token) {
-      alert("❌ Token invalide ou manquant.");
-      return;
-    }
+    setSavedSessions((prev) => [...prev, newSession]);
+    setIsRecording(false);
+    setRecordedHistory([]);
+    alert("✅ Session + mesures enregistrées en base de données !");
+  } catch (error) {
+    console.error("Erreur:", error);
+    alert("❌ Une erreur est survenue : " + error.message);
+  }
+};
 
-    try {
-      // 1) Création de la session
-      const res = await fetch(`${API_URL}/session`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(sessionToSend),
-      });
-      const result = await res.json();
 
-      if (!res.ok) {
-        if (result.message === "Token invalide ou expiré.") {
-          alert("Session expirée. Veuillez vous reconnecter.");
-          handleLogout();
-        } else {
-          alert("Erreur : " + result.message);
-        }
-        return;
-      }
 
-      // 2) Envoi des données enregistrées liées à la session
-      // Suppose que l'API attend un endpoint POST /session/:id/data
-      const sessionId = result.data.session_id; // adapte selon ta réponse API
-
-      const dataToSend = recordedHistory.map(({ capteur_id, timestamp, value }) => ({
-        capteur_id,
-        timestamp: new Date(timestamp).toISOString(),
-        value,
-      }));
-
-      const dataRes = await fetch(`${API_URL}/session/${sessionId}/data`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ data: dataToSend }),
-      });
-      const dataResult = await dataRes.json();
-
-      if (!dataRes.ok) {
-        alert("Erreur lors de l'envoi des données : " + (dataResult.message || "Erreur inconnue"));
-        return;
-      }
-
-      alert("✅ Session et données sauvegardées !");
-
-      // Reset enregistrement
-      setIsRecording(false);
-      setRecordedHistory([]);
-    } catch {
-      alert("❌ Erreur serveur.");
-    }
-  };
-
-  // Fonction pour annuler l'enregistrement sans sauvegarder
   const handleStopRecording = () => {
     if (window.confirm("Voulez-vous vraiment annuler l'enregistrement sans sauvegarder ?")) {
       setIsRecording(false);
@@ -273,7 +292,6 @@ const App = () => {
   return (
     <div className={`container ${theme}`}>
       <div className="box">
-        {/* Barre de navigation avec titre et bouton thème + déconnexion */}
         <div className="navbar">
           <h2>🌬️ VMC UFA</h2>
           <div>
@@ -298,32 +316,38 @@ const App = () => {
           </div>
         </div>
 
-        {/* Affichage des messages d'info ou d'erreur */}
         {message && <p className="message">{message}</p>}
 
-        {/* Formulaire connexion / inscription */}
         {!isLoggedIn && (
+          // Formulaire qui change de comportement selon la vue (login ou inscription)
           <form onSubmit={view === "login" ? handleLogin : handleRegister}>
+            
+            {/* Champ pour le nom d'utilisateur */}
             <input
               className="form-input"
               type="text"
               placeholder="Nom d'utilisateur"
               value={login}
-              onChange={(e) => setLogin(e.target.value)}
+              onChange={(e) => setLogin(e.target.value)} // Met à jour l'état login
               required
             />
+
+            {/* Champ pour le mot de passe */}
             <input
               className="form-input"
               type="password"
               placeholder="Mot de passe"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => setPassword(e.target.value)} // Met à jour l'état password
               required
             />
 
+            {/* Bouton principal : connexion ou inscription selon la vue active */}
             <button className="button button-primary">
-              {view === "login" ? "🔐Se connecter" : "S'inscrire"}
+              {view === "login" ? "🔐 Se connecter" : "S'inscrire"}
             </button>
+
+            {/* Bouton secondaire pour changer entre connexion et inscription */}
             <button
               type="button"
               onClick={() => setView(view === "login" ? "register" : "login")}
@@ -331,10 +355,11 @@ const App = () => {
             >
               {view === "login" ? "Créer un compte" : "Retour à la connexion"}
             </button>
+
           </form>
         )}
 
-        {/* Page principale avec données, graphiques et contrôle d'enregistrement */}
+
         {isLoggedIn && view === "home" && (
           <>
             <h3 style={{ marginBottom: "1rem" }}>👋 Bienvenue, {login} !</h3>
@@ -346,7 +371,6 @@ const App = () => {
               🔄 Actualiser les données
             </button>
 
-            {/* Boutons pour gérer l'enregistrement */}
             <div className="record-controls" style={{ marginBottom: "1rem" }}>
               {!isRecording ? (
                 <button
@@ -375,26 +399,19 @@ const App = () => {
             </div>
 
             {lastUpdate && (
-              <p
-                style={{
-                  fontStyle: "italic",
-                  marginBottom: "1rem",
-                  color: "#9ca3af",
-                }}
-              >
+              <p style={{ fontStyle: "italic", color: "#9ca3af" }}>
                 Dernière mise à jour : {lastUpdate}
               </p>
             )}
 
-            {/* Affichage des cartes capteurs */}
-            {sensorData ? (
+            {/* Affichage des capteurs temps réel, si aucune session sélectionnée */}
+            {!selectedSession && sensorData && (
               <div className="sensor-grid">
                 {sensorData.map((capteur) => (
                   <div
                     key={capteur.capteur_id}
                     className="sensor-card"
-                    data-unit={capteur.unit}
-                    onClick={() => setSelectedMetric(capteur.name)} // clic pour graphique
+                    onClick={() => setSelectedMetric(capteur.name)}
                     title={`Afficher historique ${capteur.name}`}
                   >
                     <div style={{ fontSize: "2rem" }}>
@@ -402,26 +419,21 @@ const App = () => {
                       {capteur.name === "Humidité" && "💧"}
                       {capteur.name === "CO2" && "🟢"}
                     </div>
-                    <div style={{ fontSize: "1.2rem", fontWeight: 600 }}>
-                      {capteur.name}
-                    </div>
+                    <div style={{ fontWeight: 600 }}>{capteur.name}</div>
                     <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>
                       {capteur.value} {capteur.unit}
                     </div>
                   </div>
                 ))}
               </div>
-            ) : (
-              <p>Chargement des données...</p>
             )}
 
-            {/* Graphique historique quand une métrique est sélectionnée */}
+            {/* Graphique historique du capteur sélectionné */}
             {selectedMetric && (
               <div className="chart-container">
                 <h4 style={{ textAlign: "center", marginBottom: 10 }}>
                   📈 Historique de <strong>{selectedMetric}</strong>
                 </h4>
-
                 <Line
                   data={{
                     labels: history
@@ -445,20 +457,90 @@ const App = () => {
                       legend: { position: "top" },
                       title: { display: false },
                     },
-                    scales: {
-                      y: {
-                        beginAtZero: true,
-                      },
-                    },
+                    scales: { y: { beginAtZero: true } },
                   }}
                 />
-
                 <button
                   className="button button-secondary"
                   onClick={() => setSelectedMetric(null)}
                   style={{ marginTop: "1rem" }}
                 >
                   🔙 Retour
+                </button>
+              </div>
+            )}
+
+            {/* 📦 Liste des sessions enregistrées (cliquables) */}
+            {!selectedSession && savedSessions.length > 0 && (
+              <div className="session-list">
+                <h4 style={{ marginTop: "2rem" }}>📦 Sessions enregistrées</h4>
+                {savedSessions.map((session, index) => (
+                  <div
+                    key={index}
+                    className="session-item"
+                    onClick={() => setSelectedSession(session)}
+                    style={{ cursor: "pointer" }}
+                    title="Cliquez pour voir les données enregistrées"
+                  >
+                    <h5>📝 {session.nom}</h5>
+                    <p><strong>Description :</strong> {session.description}</p>
+                    <p><strong>Utilisateur :</strong> {session.utilisateur}</p>
+                    <p><strong>Date :</strong> {session.date}</p>
+                    {/* Pour alléger la liste, on enlève les valeurs détaillées ici */}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Affichage des graphiques pour la session sélectionnée */}
+            {selectedSession && (
+              <div className="chart-container">
+                <h4 style={{ textAlign: "center", marginBottom: 10 }}>
+                  📊 Données enregistrées : <strong>{selectedSession.nom}</strong>
+                </h4>
+
+                {[...new Set(selectedSession.donnees.map((d) => d.name))].map(
+                  (capteurName) => {
+                    const donneesFiltrees = selectedSession.donnees.filter(
+                      (d) => d.name === capteurName
+                    );
+                    return (
+                      <div key={capteurName} style={{ marginBottom: "2rem" }}>
+                        <h5>{capteurName}</h5>
+                        <Line
+                          data={{
+                            labels: donneesFiltrees.map((d) =>
+                              new Date(d.timestamp).toLocaleTimeString()
+                            ),
+                            datasets: [
+                              {
+                                label: capteurName,
+                                data: donneesFiltrees.map((d) => d.value),
+                                borderColor: "rgb(153, 102, 255)",
+                                backgroundColor: "rgba(153, 102, 255, 0.2)",
+                                fill: true,
+                              },
+                            ],
+                          }}
+                          options={{
+                            responsive: true,
+                            plugins: {
+                              legend: { position: "top" },
+                            },
+                            scales: { y: { beginAtZero: true } },
+                          }}
+                        />
+                      </div>
+                    );
+                  }
+                )}
+
+                <button
+                  className="button button-secondary"
+                  onClick={() => setSelectedSession(null)}
+                  style={{ marginTop: "1rem" }}
+                >
+                  🔙 Retour aux sessions
                 </button>
               </div>
             )}
