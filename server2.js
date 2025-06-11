@@ -303,73 +303,95 @@ const config = [
 app.get('/api/capteurs', verifyToken, async (req, res) => {
   console.log('--- Requête reçue sur /api/capteurs ---');
 
+  // Vérifie si la connexion Modbus est active
   if (!socket.writable) {
     console.error('Erreur : Connexion Modbus non établie.');
     return res.status(500).json({ message: 'Erreur : connexion Modbus non établie.' });
   }
 
   try {
+    // Nombre total de registres à lire, basé sur la config des capteurs
     const totalRegistres = config.length;
     console.log('Envoi de la requête Modbus pour lire les registres');
 
+    // Lecture des registres Modbus (lecture des entrées analogiques)
     const response = await client.readInputRegisters(0, totalRegistres);
     const values = response.response._body.values;
 
     console.log(`Données Modbus brutes reçues : ${JSON.stringify(values)}`);
 
-    const ADC_MAX = 16709;
+    const ADC_MAX = 16709; // Valeur maximale de l’ADC pour les capteurs analogiques
 
+    // Fonction pour convertir une valeur 16 bits non signée en valeur signée
     function toSigned16(value) {
       return value > 0x7FFF ? value - 0x10000 : value;
     }
 
+    // Fonction pour arrondir à 4 décimales
     function roundTo4(value) {
       return parseFloat(value.toFixed(4));
     }
 
+    // Fonction de conversion des données brutes selon le type de capteur
     function convertValue(raw, capteurConfig) {
       const signedValue = toSigned16(raw);
 
       switch (capteurConfig.name) {
         case 'de température':
-        case "d'ambiance":
-          return roundTo4(signedValue / 10); // °C directement
+case "d'ambiance": {
+  const minBrut = 0;
+  const maxBrut = 16709;
+  const minPhysique = -35;
+  const maxPhysique = 35;
+
+  const percent = (signedValue - minBrut) / (maxBrut - minBrut);
+  return roundTo4(percent * (maxPhysique - minPhysique) + minPhysique);
+}
+
 
         case 'débimètre':
         case "d'humidité":
         case 'de COV':
         case 'de CO2': {
+          // Conversion en pourcentage basé sur ADC_MAX
           const percent = (signedValue / ADC_MAX) * 100;
+          // Clamp entre les min et max définis dans la config
           return roundTo4(Math.min(Math.max(percent, capteurConfig.min), capteurConfig.max));
         }
 
         default: {
+          // Cas par défaut, même traitement que précédemment
           const percent = (signedValue / ADC_MAX) * 100;
           return roundTo4(Math.min(Math.max(percent, capteurConfig.min), capteurConfig.max));
         }
       }
     }
 
+    // Traitement de chaque capteur selon sa config
     const capteursData = config.map((capteurConfig, index) => {
       const rawValue = values[index];
       const value = convertValue(rawValue, capteurConfig);
 
       return {
-        capteur_id: capteurConfig.address + 1,
+        capteur_id: capteurConfig.address + 1, // Adresse du capteur (1-based index)
         name: capteurConfig.name,
         unit: capteurConfig.unit,
-        rawValue: toSigned16(rawValue),
-        value,
-        timestamp: new Date().toISOString()
+        rawValue: toSigned16(rawValue), // Valeur brute convertie en signée
+        value, // Valeur convertie et arrondie
+        timestamp: new Date().toISOString() // Timestamp ISO
       };
     });
 
+    // Formatage du timestamp au format MySQL DATETIME
     function formatDateForMySQL(dateString) {
       const date = new Date(dateString);
       return date.toISOString().slice(0, 19).replace('T', ' ');
     }
 
+    // Requête SQL d'insertion multiple
     const sql = `INSERT INTO capteur (id_capteur, ctype, valeur, unite, date_heure) VALUES ?`;
+
+    // Création du tableau de valeurs à insérer en base de données
     const valuesToInsert = capteursData.map(capteur => [
       capteur.capteur_id,
       capteur.name,
@@ -378,6 +400,7 @@ app.get('/api/capteurs', verifyToken, async (req, res) => {
       formatDateForMySQL(capteur.timestamp),
     ]);
 
+    // Insertion des données dans la base
     db.query(sql, [valuesToInsert], (err, result) => {
       if (err) {
         console.error('Erreur lors de l’enregistrement automatique des capteurs :', err);
@@ -386,14 +409,17 @@ app.get('/api/capteurs', verifyToken, async (req, res) => {
       }
     });
 
-    console.log('🔹 Données des capteurs traitées envoyées au client:', JSON.stringify(capteursData));
+    // Réponse au client avec les données formatées
+    console.log('Données des capteurs traitées envoyées au client:', JSON.stringify(capteursData));
     return res.json(capteursData);
 
   } catch (error) {
+    // Gestion des erreurs de lecture Modbus
     console.error('Erreur lors de la lecture Modbus :', error);
     return res.status(500).json({ message: 'Erreur lors de la récupération des données des capteurs' });
   }
 });
+
 
 
 
